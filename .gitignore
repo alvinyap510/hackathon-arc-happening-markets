@@ -28,3 +28,10 @@ obj/
 .DS_Store
 *.log
 coverage/
+
+# internal build reports / decision notes — NEVER in the public repo
+BUILD_REPORT.md
+**/BUILD_REPORT.md
+*_REPORT.md
+NOTES.md
+DECISIONS.md
