@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {IOutcomeTokens} from "./IOutcomeTokens.sol";
-
 /// @title IVault
 /// @notice Custody + all physical asset movement (spec section 1).
 interface IVault {
@@ -55,7 +53,4 @@ interface IVault {
     function lockedBal(address user) external view returns (uint256);
     function freeBal(address user) external view returns (uint256);
     function tokenBal(address user, uint256 id) external view returns (uint256);
-
-    /// @dev Convenience so callers share the OutcomeTokens token-id derivation.
-    function outcomeTokens() external view returns (IOutcomeTokens);
 }
