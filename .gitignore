@@ -1,0 +1,30 @@
+# secrets — NEVER commit
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+
+# node / ts
+node_modules/
+dist/
+build/
+.next/
+*.tsbuildinfo
+
+# foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/**/dry-run/
+contracts/lib/
+
+# dotnet
+bin/
+obj/
+*.user
+
+# misc
+.DS_Store
+*.log
+coverage/
