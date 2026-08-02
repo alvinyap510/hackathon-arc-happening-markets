@@ -45,7 +45,7 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
         _engine = new TradingEngine(_ledger, _markets);
         _rfm = new RfmCoordinator(gateway);
         _batcher = new SettlementBatcher(gateway, this, cfg.OperatorAddress);
-        _indexer = new EventIndexer(gateway, ApplyEventsAsync, cfg.StartBlock);
+        _indexer = new EventIndexer(gateway, ApplyEventsAsync, ReplayResetAsync, cfg.StartBlock);
     }
 
     public ChainConfig Config => _cfg;
@@ -65,7 +65,7 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
     /// <summary>Replay from the deploy block, then start the indexer, batcher and RFM crank.</summary>
     public async Task StartAsync(CancellationToken ct)
     {
-        await ResetAndReplayAsync(ct);
+        await _indexer.ReplayAsync(ct);
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _loops = Task.Run(() => Task.WhenAll(
             _indexer.RunAsync(_cts.Token),
@@ -85,29 +85,22 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
     /// <summary>Restart semantics: replay from the deploy block, discard volatile state, bump generations.</summary>
     public async Task RestartAsync(CancellationToken ct)
     {
-        await _gate.RunAsync(() =>
-        {
-            _markets.Clear();
-            _rfm.Clear();
-            _engine.ResetForRestart();
-            _engine.BumpAllGenerations();
-            return Task.CompletedTask;
-        });
-        await ResetAndReplayAsync(ct);
+        await _indexer.ReplayAsync(ct); // ReplayResetAsync clears ledger/markets/rfm/engine/queue first
+        _engine.BumpAllGenerations();
         _sink.GenerationBump();
     }
 
-    private async Task ResetAndReplayAsync(CancellationToken ct)
+    /// <summary>Cleared by the indexer before every replay: a replay REBUILDS from events, so no
+    /// derived state may survive into it (double-apply is the bug being prevented).</summary>
+    private Task ReplayResetAsync() => _gate.RunAsync(() =>
     {
-        await _gate.RunAsync(() =>
-        {
-            _markets.Clear();
-            _rfm.Clear();
-            _engine.ResetForRestart();
-            return Task.CompletedTask;
-        });
-        await _indexer.ReplayAsync(ct);
-    }
+        _markets.Clear();
+        _rfm.Clear();
+        _engine.ResetForRestart();
+        _ledger.ResetForReplay();
+        _batcher.ClearQueue();
+        return Task.CompletedTask;
+    });
 
     private async Task RfmCrankLoopAsync(CancellationToken ct)
     {

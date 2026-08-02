@@ -75,6 +75,15 @@ public sealed class Ledger
         foreach (var e in events) Apply(e);
     }
 
+    /// <summary>Reset balances + reservations before a replay, so events are applied ONCE onto a
+    /// clean slate (never accumulated on top of existing state).</summary>
+    public void ResetForReplay()
+    {
+        _chainFree.Clear();
+        _positions.Clear();
+        _reserved.Clear();
+    }
+
     /// <summary>Drop all off-chain reservations (restart); balances remain exact.</summary>
     public void ClearReservations() => _reserved.Clear();
 

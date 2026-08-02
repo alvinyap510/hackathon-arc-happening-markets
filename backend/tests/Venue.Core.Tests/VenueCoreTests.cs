@@ -81,6 +81,25 @@ public class VenueCoreTests
     }
 
     [Fact]
+    public async Task RestartReplay_RebuildsLedgerFromScratch_NoDoubleApply()
+    {
+        var core = NewCore();
+        var sim = (SimulatedChainGateway)core.Gateway;
+        using var cts = new CancellationTokenSource();
+
+        await sim.SubmitDepositAsync(TestData.Alice, 1_000, cts.Token); // lands in the sim log stream
+        await core.StartAsync(cts.Token);
+        var first = (await core.GetBalancesAsync(TestData.Alice)).ChainFree;
+        Assert.Equal(new BigInteger(1_000), first);
+
+        await core.RestartAsync(cts.Token); // replays the SAME events from block 0
+        var second = (await core.GetBalancesAsync(TestData.Alice)).ChainFree;
+        await core.StopAsync();
+
+        Assert.Equal(first, second); // rebuilt from a clean slate, never applied twice
+    }
+
+    [Fact]
     public async Task FailedFullFill_ReleasesReservationOfFilledOrder()
     {
         var core = await SeedMarketAsync(NewCore());

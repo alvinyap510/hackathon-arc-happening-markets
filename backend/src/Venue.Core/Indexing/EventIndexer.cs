@@ -17,23 +17,28 @@ public sealed class EventIndexer
 
     private readonly IChainGateway _gateway;
     private readonly Func<IReadOnlyList<VenueEvent>, Task> _apply;
+    private readonly Func<Task>? _onReplayStart;
     private readonly ulong _startBlock;
     private ulong _cursorBlock;
     private string _cursorHash = "";
 
-    public EventIndexer(IChainGateway gateway, Func<IReadOnlyList<VenueEvent>, Task> apply, ulong startBlock)
+    public EventIndexer(IChainGateway gateway, Func<IReadOnlyList<VenueEvent>, Task> apply, Func<Task>? onReplayStart, ulong startBlock)
     {
         _gateway = gateway;
         _apply = apply;
+        _onReplayStart = onReplayStart;
         _startBlock = startBlock;
         _cursorBlock = startBlock;
     }
 
     public ulong CursorBlock => _cursorBlock;
 
-    /// <summary>Replay every event from the start block to the head, in order.</summary>
+    /// <summary>Replay every event from the start block to the head, in order. The replay is a
+    /// REBUILD: <paramref name="_onReplayStart"/> clears all derived state first so events are
+    /// never applied on top of stale balances (restart + reorg paths).</summary>
     public async Task ReplayAsync(CancellationToken ct)
     {
+        if (_onReplayStart != null) await _onReplayStart();
         var latest = await _gateway.LatestBlockAsync(ct);
         var from = _startBlock;
         while (from <= latest)
