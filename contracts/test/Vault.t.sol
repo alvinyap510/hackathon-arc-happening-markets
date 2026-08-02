@@ -382,7 +382,7 @@ contract VaultTest is Test {
 
     // ------------------------------------------------------------- receiver
 
-    function test_supportsReceiverInterface() public {
+    function test_supportsReceiverInterface() public view {
         assertTrue(vault.supportsInterface(type(IERC1155Receiver).interfaceId));
     }
 

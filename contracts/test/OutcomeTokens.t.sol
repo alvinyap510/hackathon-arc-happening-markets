@@ -269,7 +269,7 @@ contract OutcomeTokensTest is Test {
         assertEq(usdc.balanceOf(address(ot)), pool);
     }
 
-    function test_tokenIdsAreDerivedFixedWidth() public {
+    function test_tokenIdsAreDerivedFixedWidth() public view {
         bytes32 m1 = keccak256("a");
         bytes32 m2 = keccak256("b");
         assertTrue(ot.tokenId(m1, IOutcomeTokens.Outcome.YES) != ot.tokenId(m1, IOutcomeTokens.Outcome.NO));

@@ -56,7 +56,7 @@ contract CTFExchangeLiteTest is Test {
     function _trade(
         bytes32 id,
         CTFExchangeLite.TradeClass cls,
-        CTFExchangeLite.Outcome outcome,
+        IOutcomeTokens.Outcome outcome,
         address a,
         address b,
         uint256 tick,
@@ -74,7 +74,7 @@ contract CTFExchangeLiteTest is Test {
         // alice mints YES, bob mints NO: size 50e6 at yesTick 400 -> yes 20e6, no 30e6.
         CTFExchangeLite.Trade[] memory trades = new CTFExchangeLite.Trade[](1);
         trades[0] = _trade(
-            keccak256("t1"), CTFExchangeLite.TradeClass.MINT, CTFExchangeLite.Outcome.YES, alice, bob, 400, 50e6
+            keccak256("t1"), CTFExchangeLite.TradeClass.MINT, IOutcomeTokens.Outcome.YES, alice, bob, 400, 50e6
         );
         _settle(keccak256("b1"), trades);
         return (20e6, 30e6);
@@ -84,7 +84,7 @@ contract CTFExchangeLiteTest is Test {
 
     function test_settleBatch_operatorOnly() public {
         CTFExchangeLite.Trade[] memory trades = new CTFExchangeLite.Trade[](1);
-        trades[0] = _trade(keccak256("t1"), CTFExchangeLite.TradeClass.TRANSFER, CTFExchangeLite.Outcome.YES, alice, bob, 400, 10e6);
+        trades[0] = _trade(keccak256("t1"), CTFExchangeLite.TradeClass.TRANSFER, IOutcomeTokens.Outcome.YES, alice, bob, 400, 10e6);
         vm.prank(stranger);
         vm.expectRevert(CTFExchangeLite.NotOperator.selector);
         exch.settleBatch(keccak256("b1"), trades);
@@ -116,7 +116,7 @@ contract CTFExchangeLiteTest is Test {
         (uint256 yesCost, uint256 noCost) = _mintBasePositions();
 
         CTFExchangeLite.Trade[] memory trades = new CTFExchangeLite.Trade[](1);
-        trades[0] = _trade(keccak256("t2"), CTFExchangeLite.TradeClass.TRANSFER, CTFExchangeLite.Outcome.YES, alice, bob, 400, 10e6);
+        trades[0] = _trade(keccak256("t2"), CTFExchangeLite.TradeClass.TRANSFER, IOutcomeTokens.Outcome.YES, alice, bob, 400, 10e6);
         _settle(keccak256("b2"), trades);
 
         // bob pays floor(10e6*400/1000)=4e6 to alice; 10 YES alice -> bob.
@@ -135,7 +135,7 @@ contract CTFExchangeLiteTest is Test {
 
         CTFExchangeLite.Trade[] memory trades = new CTFExchangeLite.Trade[](1);
         // bob sells NO to carol at NO tick 300 -> carol pays 3e6.
-        trades[0] = _trade(keccak256("t2"), CTFExchangeLite.TradeClass.TRANSFER, CTFExchangeLite.Outcome.NO, bob, carol, 300, 10e6);
+        trades[0] = _trade(keccak256("t2"), CTFExchangeLite.TradeClass.TRANSFER, IOutcomeTokens.Outcome.NO, bob, carol, 300, 10e6);
         _settle(keccak256("b2"), trades);
         assertEq(vault.tokenBal(bob, noId), 40e6);
         assertEq(vault.tokenBal(carol, noId), 10e6);
@@ -153,11 +153,11 @@ contract CTFExchangeLiteTest is Test {
 
         // Alice acquires NO from bob (30 NO at tick 300 -> 9e6).
         CTFExchangeLite.Trade[] memory trades = new CTFExchangeLite.Trade[](1);
-        trades[0] = _trade(keccak256("t2"), CTFExchangeLite.TradeClass.TRANSFER, CTFExchangeLite.Outcome.NO, bob, alice, 300, 30e6);
+        trades[0] = _trade(keccak256("t2"), CTFExchangeLite.TradeClass.TRANSFER, IOutcomeTokens.Outcome.NO, bob, alice, 300, 30e6);
         _settle(keccak256("b2"), trades);
 
         // Alice merges her own 30 YES + 30 NO pair at yesTick 400: yes leg 12e6, no leg 18e6.
-        trades[0] = _trade(keccak256("t3"), CTFExchangeLite.TradeClass.MERGE, CTFExchangeLite.Outcome.YES, alice, alice, 400, 30e6);
+        trades[0] = _trade(keccak256("t3"), CTFExchangeLite.TradeClass.MERGE, IOutcomeTokens.Outcome.YES, alice, alice, 400, 30e6);
         _settle(keccak256("b3"), trades);
 
         assertEq(vault.tokenBal(alice, yesId), 20e6);
@@ -180,8 +180,8 @@ contract CTFExchangeLiteTest is Test {
 
         // Batch of two: first valid, second invalid (bob sells 100 NO but holds 50).
         CTFExchangeLite.Trade[] memory trades = new CTFExchangeLite.Trade[](2);
-        trades[0] = _trade(keccak256("t2"), CTFExchangeLite.TradeClass.TRANSFER, CTFExchangeLite.Outcome.YES, alice, bob, 400, 10e6);
-        trades[1] = _trade(keccak256("t3"), CTFExchangeLite.TradeClass.TRANSFER, CTFExchangeLite.Outcome.NO, bob, carol, 300, 100e6);
+        trades[0] = _trade(keccak256("t2"), CTFExchangeLite.TradeClass.TRANSFER, IOutcomeTokens.Outcome.YES, alice, bob, 400, 10e6);
+        trades[1] = _trade(keccak256("t3"), CTFExchangeLite.TradeClass.TRANSFER, IOutcomeTokens.Outcome.NO, bob, carol, 300, 100e6);
         vm.prank(operator);
         vm.expectRevert(
             abi.encodeWithSelector(CTFExchangeLite.SettleBatchFailed.selector, 1, keccak256("t3"))
@@ -203,7 +203,7 @@ contract CTFExchangeLiteTest is Test {
         _mintBasePositions();
 
         CTFExchangeLite.Trade[] memory trades = new CTFExchangeLite.Trade[](1);
-        trades[0] = _trade(keccak256("t1"), CTFExchangeLite.TradeClass.TRANSFER, CTFExchangeLite.Outcome.YES, alice, bob, 400, 10e6);
+        trades[0] = _trade(keccak256("t1"), CTFExchangeLite.TradeClass.TRANSFER, IOutcomeTokens.Outcome.YES, alice, bob, 400, 10e6);
         vm.prank(operator);
         vm.expectRevert(abi.encodeWithSelector(CTFExchangeLite.SettleBatchFailed.selector, 0, keccak256("t1")));
         exch.settleBatch(keccak256("b2"), trades);
@@ -214,7 +214,7 @@ contract CTFExchangeLiteTest is Test {
         _deposit(bob, 100e6);
         _createMarket();
         CTFExchangeLite.Trade[] memory trades = new CTFExchangeLite.Trade[](1);
-        trades[0] = _trade(keccak256("t1"), CTFExchangeLite.TradeClass.MINT, CTFExchangeLite.Outcome.YES, alice, bob, 400, 50e6);
+        trades[0] = _trade(keccak256("t1"), CTFExchangeLite.TradeClass.MINT, IOutcomeTokens.Outcome.YES, alice, bob, 400, 50e6);
         _settle(keccak256("b1"), trades);
 
         vm.prank(operator);
@@ -227,7 +227,7 @@ contract CTFExchangeLiteTest is Test {
     function test_settleBatch_maxBatch() public {
         CTFExchangeLite.Trade[] memory trades = new CTFExchangeLite.Trade[](9);
         for (uint256 i = 0; i < 9; ++i) {
-            trades[i] = _trade(bytes32(i), CTFExchangeLite.TradeClass.TRANSFER, CTFExchangeLite.Outcome.YES, alice, bob, 400, 1);
+            trades[i] = _trade(bytes32(i), CTFExchangeLite.TradeClass.TRANSFER, IOutcomeTokens.Outcome.YES, alice, bob, 400, 1);
         }
         vm.prank(operator);
         vm.expectRevert(abi.encodeWithSelector(CTFExchangeLite.BatchTooLarge.selector, 9));
@@ -243,7 +243,7 @@ contract CTFExchangeLiteTest is Test {
 
     function test_settleBatch_zeroSize() public {
         CTFExchangeLite.Trade[] memory trades = new CTFExchangeLite.Trade[](1);
-        trades[0] = _trade(keccak256("t1"), CTFExchangeLite.TradeClass.TRANSFER, CTFExchangeLite.Outcome.YES, alice, bob, 400, 0);
+        trades[0] = _trade(keccak256("t1"), CTFExchangeLite.TradeClass.TRANSFER, IOutcomeTokens.Outcome.YES, alice, bob, 400, 0);
         vm.prank(operator);
         vm.expectRevert(abi.encodeWithSelector(CTFExchangeLite.SettleBatchFailed.selector, 0, keccak256("t1")));
         exch.settleBatch(keccak256("b1"), trades);
@@ -251,7 +251,7 @@ contract CTFExchangeLiteTest is Test {
 
     function test_settleBatch_tickOutOfRange() public {
         CTFExchangeLite.Trade[] memory trades = new CTFExchangeLite.Trade[](1);
-        trades[0] = _trade(keccak256("t1"), CTFExchangeLite.TradeClass.TRANSFER, CTFExchangeLite.Outcome.YES, alice, bob, 1001, 10e6);
+        trades[0] = _trade(keccak256("t1"), CTFExchangeLite.TradeClass.TRANSFER, IOutcomeTokens.Outcome.YES, alice, bob, 1001, 10e6);
         vm.prank(operator);
         vm.expectRevert(abi.encodeWithSelector(CTFExchangeLite.TickOutOfRange.selector, 1001));
         exch.settleBatch(keccak256("b1"), trades);
@@ -264,7 +264,7 @@ contract CTFExchangeLiteTest is Test {
         _mintBasePositions();
         CTFExchangeLite.Trade[] memory trades = new CTFExchangeLite.Trade[](1);
         // alice holds 50 YES; selling 60 should fail with the failing index.
-        trades[0] = _trade(keccak256("t2"), CTFExchangeLite.TradeClass.TRANSFER, CTFExchangeLite.Outcome.YES, alice, bob, 400, 60e6);
+        trades[0] = _trade(keccak256("t2"), CTFExchangeLite.TradeClass.TRANSFER, IOutcomeTokens.Outcome.YES, alice, bob, 400, 60e6);
         vm.prank(operator);
         vm.expectRevert(abi.encodeWithSelector(CTFExchangeLite.SettleBatchFailed.selector, 0, keccak256("t2")));
         exch.settleBatch(keccak256("b2"), trades);

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ERC1155} from "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
@@ -13,6 +14,8 @@ import {IOutcomeTokens} from "./interfaces/IOutcomeTokens.sol";
 ///         Vault-only; resolve is operator-only one-shot; redeem is permissionless.
 /// @dev Spec: PLAN_CONTRACTS.md section 3. Money is 6-dec USDC, never native.
 contract OutcomeTokens is ERC1155, ReentrancyGuard, IOutcomeTokens {
+    using SafeERC20 for IERC20;
+
     IERC20 public immutable usdc;
     address public immutable operator;
     address public immutable deployer;
@@ -103,7 +106,7 @@ contract OutcomeTokens is ERC1155, ReentrancyGuard, IOutcomeTokens {
     function split(bytes32 marketId, uint256 size) external nonReentrant onlyVault {
         if (!markets[marketId].exists) revert NotExists();
         if (size == 0) revert ZeroAmount();
-        usdc.transferFrom(msg.sender, address(this), size);
+        usdc.safeTransferFrom(msg.sender, address(this), size);
         markets[marketId].collateralPool += size;
         _mint(msg.sender, tokenId(marketId, Outcome.YES), size, "");
         _mint(msg.sender, tokenId(marketId, Outcome.NO), size, "");
@@ -116,7 +119,7 @@ contract OutcomeTokens is ERC1155, ReentrancyGuard, IOutcomeTokens {
         _burn(msg.sender, tokenId(marketId, Outcome.YES), size);
         _burn(msg.sender, tokenId(marketId, Outcome.NO), size);
         markets[marketId].collateralPool -= size;
-        usdc.transfer(msg.sender, size);
+        usdc.safeTransfer(msg.sender, size);
     }
 
     /// @notice Operator-only, one-shot resolution. Winning token redeems 1:1, losing to 0.
@@ -137,7 +140,7 @@ contract OutcomeTokens is ERC1155, ReentrancyGuard, IOutcomeTokens {
         if (amt == 0) revert ZeroAmount();
         _burn(msg.sender, tokenId(marketId, m.winningOutcome), amt);
         m.collateralPool -= amt;
-        usdc.transfer(msg.sender, amt);
+        usdc.safeTransfer(msg.sender, amt);
         emit Redeemed(msg.sender, marketId, amt);
     }
 

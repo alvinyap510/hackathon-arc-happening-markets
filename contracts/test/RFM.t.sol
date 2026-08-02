@@ -223,10 +223,12 @@ contract RFMTest is Test {
         _deposit(institution, 1200e6);
         uint256 requestId = _post(institution, IRFM.Side.YES);
         for (uint256 i = 0; i < 32; ++i) {
+            // forge-lint: disable-next-line(unsafe-typecast)
             address mm = address(uint160(0x1000 + i));
             _deposit(mm, BOND);
             _commit(mm, requestId, 500, 100e6, i);
         }
+        // forge-lint: disable-next-line(unsafe-typecast)
         address mm33 = address(uint160(0x9999));
         _deposit(mm33, BOND);
         vm.expectRevert("slots full");
@@ -491,7 +493,7 @@ contract RFMTest is Test {
                 return;
             }
         }
-        fail("MarketBorn not emitted");
+        assertTrue(false, "MarketBorn not emitted");
     }
 
     function test_finalize_32Quotes() public {
@@ -500,6 +502,7 @@ contract RFMTest is Test {
         uint256 requestId = _post(institution, IRFM.Side.YES);
         uint256 perMM = 50e6;
         for (uint256 i = 0; i < 32; ++i) {
+            // forge-lint: disable-next-line(unsafe-typecast)
             address mm = address(uint160(0x1000 + i));
             uint256 lock = perMM - (perMM * 500) / 1000;
             _deposit(mm, BOND + lock);
@@ -507,6 +510,7 @@ contract RFMTest is Test {
         }
         _warpToReveal();
         for (uint256 i = 0; i < 32; ++i) {
+            // forge-lint: disable-next-line(unsafe-typecast)
             address mm = address(uint160(0x1000 + i));
             _reveal(mm, requestId, 500, perMM, i);
         }

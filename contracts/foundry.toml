@@ -12,6 +12,11 @@ fs_permissions = []
 [fuzz]
 runs = 256
 
+[invariant]
+runs = 32
+depth = 20
+fail_on_revert = false
+
 [fmt]
 line_length = 120
 tab_width = 4

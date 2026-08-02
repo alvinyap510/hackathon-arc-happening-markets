@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
@@ -20,6 +21,8 @@ import {IVault} from "./interfaces/IVault.sol";
 ///      `lockedBal[user]` is the locked subset; free = usdcBal - lockedBal. Every op
 ///      either conserves the internal total or moves matching physical assets.
 contract Vault is IVault, ReentrancyGuard, IERC1155Receiver {
+    using SafeERC20 for IERC20;
+
     IERC20 public immutable usdc;
     address public immutable outcomeTokens;
     address public immutable deployer;
@@ -71,7 +74,7 @@ contract Vault is IVault, ReentrancyGuard, IERC1155Receiver {
         outcomeTokens = outcomeTokens_;
         deployer = deployer_;
         // Split pulls pool funding from Vault's physical USDC in one approval.
-        usdc.approve(outcomeTokens_, type(uint256).max);
+        IERC20(usdc_).forceApprove(outcomeTokens_, type(uint256).max);
     }
 
     /// @notice One-shot role wiring for the cyclic deploy edges (exchange, rfm).
@@ -86,7 +89,7 @@ contract Vault is IVault, ReentrancyGuard, IERC1155Receiver {
 
     function deposit(uint256 amt) external nonReentrant {
         if (amt == 0) revert ZeroAmount();
-        usdc.transferFrom(msg.sender, address(this), amt);
+        usdc.safeTransferFrom(msg.sender, address(this), amt);
         usdcBal[msg.sender] += amt;
         emit Deposited(msg.sender, amt);
     }
@@ -95,7 +98,7 @@ contract Vault is IVault, ReentrancyGuard, IERC1155Receiver {
         if (amt == 0) revert ZeroAmount();
         if (freeBal(msg.sender) < amt) revert InsufficientFree();
         usdcBal[msg.sender] -= amt;
-        usdc.transfer(msg.sender, amt);
+        usdc.safeTransfer(msg.sender, amt);
         emit Withdrawn(msg.sender, amt);
     }
 

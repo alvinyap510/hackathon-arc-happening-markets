@@ -20,13 +20,12 @@ contract CTFExchangeLite is ReentrancyGuard {
     uint256 public constant MAX_BATCH = 8;
 
     enum TradeClass { TRANSFER, MINT, MERGE }
-    enum Outcome { YES, NO }
 
     struct Trade {
         bytes32 tradeId;
         bytes32 marketId;
         TradeClass class;
-        Outcome outcome; // TRANSFER only
+        IOutcomeTokens.Outcome outcome; // TRANSFER only
         address partyA; // TRANSFER: seller; MINT/MERGE: yes party
         address partyB; // TRANSFER: buyer; MINT/MERGE: no party
         uint256 outcomeTick; // TRANSFER: outcome price; MINT/MERGE: yes tick
@@ -85,7 +84,7 @@ contract CTFExchangeLite is ReentrancyGuard {
         address seller = t.partyA;
         address buyer = t.partyB;
         uint256 cost = (t.size * t.outcomeTick) / 1000;
-        uint256 id = outcomeTokens.tokenId(t.marketId, IOutcomeTokens.Outcome(uint8(t.outcome)));
+        uint256 id = outcomeTokens.tokenId(t.marketId, t.outcome);
         if (vault.freeBal(buyer) < cost) revert SettleBatchFailed(i, t.tradeId);
         if (vault.tokenBal(seller, id) < t.size) revert SettleBatchFailed(i, t.tradeId);
         vault.moveUSDC(buyer, seller, cost, t.tradeId);
