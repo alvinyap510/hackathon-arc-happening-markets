@@ -75,8 +75,17 @@ export default function RfmPage({ onOpenMarket }: { onOpenMarket: (id: string) =
           {selected ? (
             <AuctionCard key={selected} requestId={selected} onOpenMarket={onOpenMarket} />
           ) : (
-            <div className="panel p-8 text-center text-sm text-ink-400">
-              Post a request to start a sealed auction.
+            <div className="panel p-8 text-center">
+              <div className="num flex items-center justify-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-400">
+                <span>Open</span>
+                <span className="text-ink-600">→</span>
+                <span>Commit</span>
+                <span className="text-ink-600">→</span>
+                <span>Reveal</span>
+                <span className="text-ink-600">→</span>
+                <span className="text-gold-300">Born</span>
+              </div>
+              <p className="mt-3 text-sm text-ink-400">Post a request to start a sealed auction.</p>
             </div>
           )}
         </div>

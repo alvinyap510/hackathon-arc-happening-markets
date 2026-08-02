@@ -186,9 +186,7 @@ export default function AuctionCard({
           </div>
           {flightDone && (
             <div className="mt-5 animate-rise">
-              <p className="text-xs text-ink-300">
-                The book is open and quoting live. The institution holds its hedge; the crowd provides exit liquidity.
-              </p>
+              <p className="text-xs text-ink-300">The book is open and quoting live.</p>
               <button onClick={() => onOpenMarket(bornMarketId)} className="btn-gold mt-3">
                 Trade this market
               </button>
