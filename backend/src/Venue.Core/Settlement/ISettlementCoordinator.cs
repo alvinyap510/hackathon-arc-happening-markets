@@ -16,4 +16,11 @@ public interface ISettlementCoordinator
 
     /// <summary>Attribution unclear or repair attempts exhausted: cancel every order in the batch, let the book re-cross.</summary>
     Task CancelAllOrdersAsync(IReadOnlyList<MatchedTrade> matches, string reason);
+
+    /// <summary>
+    /// Settlement race seal: drop (and unwind the orders of) every match whose market is
+    /// unknown, Closing or Resolved — a market that is resolving must never settle a stale
+    /// fill, even one already dequeued into a batch. Returns the matches that may still settle.
+    /// </summary>
+    Task<IReadOnlyList<MatchedTrade>> UnwindClosedAsync(IReadOnlyList<MatchedTrade> matches);
 }

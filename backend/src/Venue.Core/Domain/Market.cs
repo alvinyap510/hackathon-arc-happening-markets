@@ -12,6 +12,10 @@ public sealed class Market
     public bool Reserved { get; set; }
     public bool Exists { get; set; }
     public bool Resolved { get; set; }
+    /// <summary>Set the moment resolution is INITIATED (before the resolve tx mines or its event
+    /// is indexed). A Closing market admits NO new orders and settles NO fills — it is the
+    /// local gate that closes the window between "resolution started" and "resolution indexed".</summary>
+    public bool Closing { get; set; }
     public Outcome? WinningOutcome { get; set; }
 
     /// <summary>RFM-born birth marks (canonical YES basis), from MarketBorn.</summary>

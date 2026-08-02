@@ -172,6 +172,7 @@ public static class TradingEndpoints
     {
         marketId = m.MarketId,
         exists = m.Exists,
+        closing = m.Closing,
         resolved = m.Resolved,
         winningOutcome = m.WinningOutcome?.ToString().ToLowerInvariant(),
         born = m.BornRequestId == null ? null : new { requestId = m.BornRequestId.ToString(), marginalYesTick = m.BornMarginalYesTick, vwapYesTick = m.BornVwapYesTick, filled = m.BornFilledQuantity?.ToString() },

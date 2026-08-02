@@ -79,18 +79,26 @@ public sealed class SettlementBatcher
             await Task.Delay(100, ct);
     }
 
-    /// <summary>The settlement loop; run as a background task from the host.</summary>
+    /// <summary>The settlement loop; run as a background task from the host. The busy flag is
+    /// set BEFORE dequeue and cleared after the batch is terminal, so a resolution gate awaiting
+    /// idle covers the whole dequeue+submit window (no drained-but-not-busy gap).</summary>
     public async Task RunAsync(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
-            var batch = await DrainAsync(ct);
-            if (batch.Count == 0)
+            Interlocked.Exchange(ref _busy, 1);
+            List<MatchedTrade> batch;
+            try
             {
-                await Task.Delay(FlushInterval, ct);
-                continue;
+                batch = await DrainAsync(ct);
+                if (batch.Count > 0) await SubmitWithRepairAsync(batch, ct);
             }
-            await SubmitWithRepairAsync(batch, ct);
+            finally
+            {
+                Interlocked.Exchange(ref _busy, 0);
+            }
+            if (batch.Count == 0)
+                await Task.Delay(FlushInterval, ct);
         }
     }
 
@@ -119,23 +127,18 @@ public sealed class SettlementBatcher
     }
 
     private async Task SubmitWithRepairAsync(List<MatchedTrade> batch, CancellationToken ct)
-    {
-        Interlocked.Exchange(ref _busy, 1);
-        try
-        {
-            await SubmitWithRepairCoreAsync(batch, ct);
-        }
-        finally
-        {
-            Interlocked.Exchange(ref _busy, 0);
-        }
-    }
+        => await SubmitWithRepairCoreAsync(batch, ct);
 
     private async Task SubmitWithRepairCoreAsync(List<MatchedTrade> batch, CancellationToken ct)
     {
         var remaining = batch;
         for (var attempt = 0; attempt <= MaxRepairAttempts && remaining.Count > 0; attempt++)
         {
+            // Settlement race seal: a market that became Closing/Resolved since these fills were
+            // matched must never settle them — unwind them and continue with the open remainder.
+            remaining = (await _core.UnwindClosedAsync(remaining)).ToList();
+            if (remaining.Count == 0) return;
+
             var batchId = Hash.BatchId(_operatorAddress, ++_batchAttempt);
             string? txHash = null;
             SettlementReceipt outcome;

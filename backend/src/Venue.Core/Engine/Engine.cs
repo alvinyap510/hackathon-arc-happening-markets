@@ -66,8 +66,15 @@ public sealed class Engine
             throw new ArgumentOutOfRangeException(nameof(req.Price), "limit price must be 1..999 ticks");
 
         var (asset, amount) = Order.ReserveFor(market.MarketId, req.Outcome, req.Side, req.Size, ReservePrice(req));
-        if (market.Resolved)
+
+        // Intake gate: a market that is unknown, Resolved or Closing (resolution initiated) is
+        // closed for trading — nothing may be admitted against it.
+        if (!_markets.TryGetValue(market.MarketId, out var known))
+            return Reject(req, market, asset, amount, "market_not_found");
+        if (known.Resolved)
             return Reject(req, market, asset, amount, "market_resolved");
+        if (known.Closing)
+            return Reject(req, market, asset, amount, "market_closing");
         if (_ledger.Available(req.User, asset) < amount)
             return Reject(req, market, asset, amount, "insufficient_available");
         if (!string.IsNullOrEmpty(req.ClientOrderId) && _byClientId.ContainsKey(req.ClientOrderId))

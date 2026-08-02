@@ -1,4 +1,5 @@
 using System.Numerics;
+using Venue.Broadcasting;
 using Venue.Chain;
 using Venue.Domain;
 using Venue.Engine;
@@ -182,6 +183,61 @@ public class SettlementTests
     // ------------------------------------------------------------ timeout reconciliation
 
     [Fact]
+    public async Task Batcher_BatchInFlightWhenResolutionInitiates_DoesNotSettle()
+    {
+        var gateway = new ScriptedGateway();
+        var core = new VenueCore(TestData.Cfg, gateway, new NullEventSink());
+        var market = Hash.NormalizeBytes32("0xEEEE");
+        await core.ApplyEventsAsync(new VenueEvent[]
+        {
+            new MarketCreated(TestData.Ot, 1, 0, "0x", market, Array.Empty<byte>()),
+            new Deposited(TestData.Vault, 2, 0, "0x", TestData.Alice, 10_000_000),
+            new Deposited(TestData.Vault, 3, 0, "0x", TestData.Bob, 10_000_000),
+            new TokensDeposited(TestData.Vault, 4, 0, "0x", TestData.Alice, Assets.TokenId(market, Outcome.Yes), 10_000_000),
+        });
+
+        await core.PlaceOrderAsync(new OrderRequest(TestData.Alice, market, Outcome.Yes, OrderSide.Sell, 100_000, 600, OrderType.Limit, "s1", null));
+        var buy = await core.PlaceOrderAsync(new OrderRequest(TestData.Bob, market, Outcome.Yes, OrderSide.Buy, 100_000, 600, OrderType.Limit, "b1", null));
+        Assert.Equal(1, core.PendingSettlements);
+
+        // The batcher has already dequeued this batch (out of the queue, about to submit) when
+        // resolution initiates. Market is still open, so the seal lets it through on this check.
+        var dequeued = await core.UnwindClosedAsync(buy.Fills.ToList());
+        Assert.Single(dequeued);
+
+        // Resolution initiates: market becomes Closing, the queue is drained.
+        await core.ResolveMarketAsync(market, Outcome.Yes);
+        Assert.Equal(0, core.PendingSettlements);
+
+        // The settle-time seal aborts the already-dequeued batch — nothing settles against Closing.
+        var afterClose = await core.UnwindClosedAsync(dequeued);
+        Assert.Empty(afterClose);
+        Assert.Null(await core.GetOrderAsync(buy.Order.OrderId));
+        var bobBal = await core.GetBalancesAsync(TestData.Bob);
+        Assert.Equal(new BigInteger(10_000_000), bobBal.Available);
+
+        // Intake rejects while Closing (before the MarketResolved event is even indexed).
+        var rejected = await core.PlaceOrderAsync(new OrderRequest(TestData.Bob, market, Outcome.No, OrderSide.Buy, 1000, 400, OrderType.Limit, "s2", null));
+        Assert.Equal(OrderStatus.Rejected, rejected.TerminalStatus);
+        Assert.Equal("market_closing", rejected.RejectReason);
+    }
+
+    [Fact]
+    public void Engine_RejectsNonExistentMarket()
+    {
+        var ledger = TestData.NewLedger();
+        TestData.SeedUsdc(ledger, TestData.Bob, 10_000);
+        var engine = TestData.NewEngine(ledger, "0x" + new string('f', 64)); // a DIFFERENT registered market
+        var ghostMarket = TestData.MarketFor("0x" + new string('9', 64));    // not in the engine's map
+
+        var result = engine.Place(new OrderRequest(TestData.Bob, ghostMarket.MarketId, Outcome.Yes, OrderSide.Buy, 100, 500, OrderType.Limit, "g1", null), ghostMarket);
+        Assert.Equal(OrderStatus.Rejected, result.TerminalStatus);
+        Assert.Equal("market_not_found", result.RejectReason);
+    }
+
+    // ------------------------------------------------------------ timeout reconciliation
+
+    [Fact]
     public async Task Batcher_TimeoutThatLaterMines_ConfirmsInsteadOfCancelling()
     {
         var gateway = new ScriptedGateway();
@@ -301,8 +357,8 @@ public class SettlementTests
         public bool PendingTx { get; set; }
         public BatchRevertInfo? LatestRevert { get; set; }
 
-        public Task<string> SubmitFinalizeAsync(BigInteger requestId, CancellationToken ct) => throw new NotImplementedException();
-        public Task<string> SubmitResolveAsync(string marketId, Outcome outcome, CancellationToken ct) => throw new NotImplementedException();
+        public Task<string> SubmitFinalizeAsync(BigInteger requestId, CancellationToken ct) => Task.FromResult("0xfin");
+        public Task<string> SubmitResolveAsync(string marketId, Outcome outcome, CancellationToken ct) => Task.FromResult("0xresolve");
         public Task<string> SubmitDepositAsync(string user, BigInteger amt, CancellationToken ct) => throw new NotImplementedException();
         public Task<string> SubmitWithdrawAsync(string user, BigInteger amt, CancellationToken ct) => throw new NotImplementedException();
         public Task<string> SubmitDepositTokensAsync(string user, string tokenId, BigInteger amt, CancellationToken ct) => throw new NotImplementedException();
@@ -341,5 +397,13 @@ public class SettlementTests
             CancelledAll.Add((matches, reason));
             return Task.CompletedTask;
         }
+
+        public Task<IReadOnlyList<MatchedTrade>> UnwindClosedAsync(IReadOnlyList<MatchedTrade> matches)
+        {
+            Unwound.Add(matches);
+            return Task.FromResult(matches);
+        }
+
+        public List<IReadOnlyList<MatchedTrade>> Unwound { get; } = new();
     }
 }

@@ -160,6 +160,7 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
             case MarketResolved r:
                 var m = GetOrCreate(r.MarketId);
                 m.Resolved = true;
+                m.Closing = true;
                 m.WinningOutcome = r.Outcome;
                 CloseMarketForResolution(r.MarketId);
                 break;
@@ -359,10 +360,10 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
     // ------------------------------------------------------- settlement hooks
 
     /// <summary>
-    /// Operator resolution with the resolution gate: close the market (cancel book + drain
-    /// pending fills), let any in-flight batch settle, THEN submit the resolve tx — so a
-    /// stale fill can never mine after resolution. The MarketResolved event re-closes the
-    /// market idempotently when it lands.
+    /// Operator resolution with the resolution gate: mark the market CLOSING (so nothing can be
+    /// admitted or settled against it), close the book + drain pending fills, let any in-flight
+    /// batch abort via the settle-time seal, THEN submit the resolve tx. The MarketResolved event
+    /// re-closes the market idempotently when it lands.
     /// </summary>
     public async Task ResolveMarketAsync(string marketId, Outcome outcome)
     {
@@ -370,11 +371,37 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
         {
             var market = RequireMarket(marketId);
             if (market.Resolved) throw new InvalidOperationException("market already resolved");
+            market.Closing = true; // closes the intake + settle window BEFORE the on-chain resolve
             CloseMarketForResolution(marketId);
             return Task.CompletedTask;
         });
         await _batcher.AwaitIdleAsync(CancellationToken.None);
         await _gateway.SubmitResolveAsync(marketId, outcome, CancellationToken.None);
+    }
+
+    public async Task<IReadOnlyList<MatchedTrade>> UnwindClosedAsync(IReadOnlyList<MatchedTrade> matches)
+    {
+        return await _gate.RunAsync(() =>
+        {
+            var open = new List<MatchedTrade>();
+            foreach (var m in matches)
+            {
+                var key = Infrastructure.Hash.NormalizeBytes32(m.Trade.MarketId);
+                var closed = !_markets.TryGetValue(key, out var mk) || mk.Closing || mk.Resolved;
+                if (closed)
+                {
+                    _engine.UnwindOrder(m.MakerOrderId);
+                    _engine.UnwindOrder(m.TakerOrderId);
+                    _sink.SettlementOutcome(m.Trade.MarketId, "", TxStatus.Reverted, "market_closed", new[] { m.Trade.TradeId });
+                    _sink.BookChanged(m.Trade.MarketId);
+                }
+                else
+                {
+                    open.Add(m);
+                }
+            }
+            return Task.FromResult<IReadOnlyList<MatchedTrade>>(open);
+        });
     }
 
     public async Task ConfirmBatchAsync(string batchId, IReadOnlyList<MatchedTrade> matches)
