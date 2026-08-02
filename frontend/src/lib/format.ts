@@ -56,8 +56,11 @@ export function timeRemaining(deadlineIso: string, nowMs: number): string {
   return m > 0 ? `${m}m ${r}s` : `${r}s`;
 }
 
-export function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", {
+export function formatDate(value: string): string {
+  // Accept both ISO strings (mock) and unix-seconds strings (real backend closeTime).
+  const d = /^\d+$/.test(value) ? new Date(Number(value) * 1000) : new Date(value);
+  if (Number.isNaN(d.getTime())) return "TBD";
+  return d.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
