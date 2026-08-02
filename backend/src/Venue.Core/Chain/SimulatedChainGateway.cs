@@ -131,6 +131,12 @@ public sealed class SimulatedChainGateway : IChainGateway
     public Task<BigInteger> GetUsdcWalletBalanceAsync(string user, CancellationToken ct)
         => Task.FromResult(_contract.WalletOf(user));
 
+    public Task FundGasAsync(string address, CancellationToken ct)
+        => Task.CompletedTask; // simulated chain has no gas cost
+
+    public async Task SubmitCreateMarketAsync(string marketId, byte[] meta, CancellationToken ct)
+        => Record(r => _contract.CreateMarket(marketId, meta, r));
+
     public Task<TxStatus> TxStatusAsync(string txHash, CancellationToken ct)
     {
         lock (_sync)

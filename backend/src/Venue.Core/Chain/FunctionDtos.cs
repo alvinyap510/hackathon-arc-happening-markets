@@ -104,6 +104,13 @@ public sealed class FinalizeFunction : FunctionMessage
 
 // ---------------------------------------------------------------- OutcomeTokens
 
+[Function("createMarket")]
+public sealed class CreateMarketFunction : FunctionMessage
+{
+    [Parameter("bytes32", "marketId", 1)] public byte[] MarketId { get; set; } = Array.Empty<byte>();
+    [Parameter("bytes", "meta", 2)] public byte[] Meta { get; set; } = Array.Empty<byte>();
+}
+
 [Function("resolve")]
 public sealed class ResolveFunction : FunctionMessage
 {

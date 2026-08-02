@@ -17,6 +17,7 @@ public sealed class AppConfig
     public required int RevealSeconds { get; init; }
     public required string SaltSecret { get; init; }
     public required string MetadataStorePath { get; init; }
+    public required IReadOnlyList<SeedMarket> SeedMarkets { get; init; }
 
     public static AppConfig Load(IConfiguration cfg)
     {
@@ -53,6 +54,11 @@ public sealed class AppConfig
             RevealSeconds = cfg.GetValue<int?>("Venue:RfmWindows:RevealSeconds") ?? 60,
             SaltSecret = cfg["Venue:SaltSecret"] ?? "",
             MetadataStorePath = cfg["Venue:MetadataStorePath"] ?? "data/market-metadata.json",
+            SeedMarkets = new[]
+            {
+                new SeedMarket("Will Bitcoin close above $120,000 on 2026-08-15?", "Coinbase index price", 1786838340),
+                new SeedMarket("Will the Fed cut rates at the September 2026 FOMC?", "OperatorFiat (Fed announcement)", 1789603140),
+            },
         };
     }
 
@@ -62,3 +68,6 @@ public sealed class AppConfig
     private static ulong ParseUlong(string? v, ulong fallback)
         => ulong.TryParse(v, out var r) ? r : fallback;
 }
+
+/// <summary>A market seeded on-chain at startup (SEAM 2): operator createMarket + G1 metadata.</summary>
+public sealed record SeedMarket(string QuestionText, string ResolutionSource, long CloseTime);

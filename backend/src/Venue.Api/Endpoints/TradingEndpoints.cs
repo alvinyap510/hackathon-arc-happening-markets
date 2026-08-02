@@ -196,6 +196,11 @@ public static class TradingEndpoints
             var rfm = await core.GetRfmRequestAsync(m.BornRequestId.Value);
             if (rfm != null) meta = metadata.Get(rfm.Market);
         }
+        else
+        {
+            // Seeded non-RFM markets key their G1 metadata by marketId directly.
+            meta = metadata.Get(m.MarketId);
+        }
 
         return new
         {

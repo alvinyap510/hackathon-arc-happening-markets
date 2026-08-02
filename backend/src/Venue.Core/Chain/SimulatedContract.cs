@@ -160,6 +160,17 @@ public sealed class SimulatedContract
         return Ok(ctx, new MarketResolved(_ot, ctx.BlockNumber, ctx.NextLogIndex(), ctx.TxHash, marketId, outcome));
     }
 
+    /// <summary>Operator createMarket for non-RFM (seeded) markets: sets Exists and emits
+    /// MarketCreated, mirroring OutcomeTokens.createMarket's operator path.</summary>
+    public SimOpResult CreateMarket(string marketId, byte[] meta, TxCtx ctx)
+    {
+        var id = Hash.NormalizeBytes32(marketId);
+        var m = _markets.GetValueOrDefault(id);
+        if (m.Exists) return Revert(ctx, "AlreadyExists");
+        _markets[id] = (m.Reserved, Exists: true, m.Resolved, m.Win);
+        return Ok(ctx, new MarketCreated(_ot, ctx.BlockNumber, ctx.NextLogIndex(), ctx.TxHash, id, meta));
+    }
+
     public SimOpResult Redeem(string user, string marketId, BigInteger amt, TxCtx ctx)
     {
         var m = _markets.GetValueOrDefault(Hash.NormalizeBytes32(marketId));
