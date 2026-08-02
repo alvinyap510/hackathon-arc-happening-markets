@@ -31,6 +31,8 @@ core.SetSink(hub);
 
 var sessions = new SessionStore();
 var salts = new SaltService(appCfg.SaltSecret);
+// Restart-durable RFM market metadata (INTEGRATION_CONTRACT G1), keyed by marketHash.
+var marketMetadata = new MarketMetadataStore(appCfg.MetadataStorePath);
 
 builder.Services.AddSingleton(appCfg);
 builder.Services.AddSingleton(gateway);
@@ -38,6 +40,7 @@ builder.Services.AddSingleton(circle);
 builder.Services.AddSingleton(core);
 builder.Services.AddSingleton(hub);
 builder.Services.AddSingleton(sessions);
+builder.Services.AddSingleton(marketMetadata);
 builder.Services.AddHostedService(_ => new CoreHostedService(core));
 
 // Money amounts travel as decimal strings everywhere in the API.
@@ -47,8 +50,8 @@ var app = builder.Build();
 app.UseWebSockets();
 
 app.MapUserEndpoints(sessions, appCfg, circle, core, gateway);
-app.MapTradingEndpoints(sessions, appCfg, core, gateway);
-app.MapRfmEndpoints(sessions, appCfg, core, gateway, salts);
+app.MapTradingEndpoints(sessions, appCfg, core, gateway, marketMetadata);
+app.MapRfmEndpoints(sessions, appCfg, core, gateway, salts, marketMetadata);
 app.MapOpsEndpoints(appCfg, core, gateway);
 
 app.MapGet("/ws", async (HttpContext ctx) =>
