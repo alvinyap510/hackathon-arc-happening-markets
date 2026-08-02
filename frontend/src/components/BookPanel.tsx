@@ -1,7 +1,7 @@
-import type { Book } from "../lib/types";
+import type { Book, BookLevel } from "../lib/types";
 import { formatUsdc, tickToPct } from "../lib/format";
 
-function Ladder({ title, levels, tone }: { title: string; levels: { tick: number; size: string }[]; tone: "yes" | "no" }) {
+function Ladder({ title, levels, tone }: { title: string; levels: BookLevel[]; tone: "yes" | "no" }) {
   const max = levels.reduce((a, l) => (BigInt(l.size) > a ? BigInt(l.size) : a), 1n);
   return (
     <div>
@@ -9,12 +9,12 @@ function Ladder({ title, levels, tone }: { title: string; levels: { tick: number
       <div className="space-y-0.5">
         {levels.length === 0 && <div className="py-1 text-[11px] text-ink-500">empty</div>}
         {levels.map((l) => (
-          <div key={l.tick} className="relative flex justify-between rounded px-2 py-1 text-xs">
+          <div key={l.price} className="relative flex justify-between rounded px-2 py-1 text-xs">
             <div
               className={`absolute inset-y-0 right-0 rounded ${tone === "yes" ? "bg-yes-900/60" : "bg-no-900/60"}`}
               style={{ width: `${Number((BigInt(l.size) * 100n) / max)}%` }}
             />
-            <span className={`num relative ${tone === "yes" ? "text-yes-300" : "text-no-300"}`}>{tickToPct(l.tick)}</span>
+            <span className={`num relative ${tone === "yes" ? "text-yes-300" : "text-no-300"}`}>{tickToPct(l.price)}</span>
             <span className="num relative text-paper-300">{formatUsdc(l.size, 0)}</span>
           </div>
         ))}
@@ -26,7 +26,7 @@ function Ladder({ title, levels, tone }: { title: string; levels: { tick: number
 function BookSide({ label, side }: { label: string; side: Book["yes"] }) {
   const mid =
     side.bids.length > 0 && side.asks.length > 0
-      ? Math.round((side.bids[0].tick + side.asks[0].tick) / 2)
+      ? Math.round((side.bids[0].price + side.asks[0].price) / 2)
       : null;
   return (
     <div className="panel-inset p-3">

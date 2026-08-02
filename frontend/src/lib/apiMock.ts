@@ -3,7 +3,7 @@
 
 import type { VenueApi } from "./api";
 import { MockVenue } from "./mockVenue";
-import { RfmManager, type RfmRuntime } from "./mockRfm";
+import { RfmManager, MOCK_COMMIT_MS, type RfmRuntime } from "./mockRfm";
 import type {
   Balances,
   Book,
@@ -30,10 +30,10 @@ const SEEDED: { id: string; q: string; src: string; close: string; mid: number }
     mid: 420,
   },
   {
-    id: "mkt-arg-wc26",
-    q: "Will Argentina win the 2026 FIFA World Cup?",
+    id: "mkt-arg-wc30",
+    q: "Will Argentina win the 2030 FIFA World Cup?",
     src: "FIFA official result",
-    close: "2026-07-19T20:00:00Z",
+    close: "2030-07-21T20:00:00Z",
     mid: 260,
   },
 ];
@@ -64,8 +64,9 @@ export class MockApi implements VenueApi {
     this.venue.start();
   }
 
-  // The pre-staged auction launches lazily on first RFM-tab visit, so it is
-  // always mid-commit when the user arrives (mirrors the on-stage choreography).
+  // The pre-staged auction launches lazily on first RFM-tab visit, already near the
+  // end of its commit window, so it reaches reveal moments after the user arrives
+  // (mirrors the on-stage choreography: attach to a pre-staged request near the boundary).
   private staged = false;
   private ensureStaged(): void {
     if (this.staged) return;
@@ -80,7 +81,7 @@ export class MockApi implements VenueApi {
         minMatch: "500000000",
         maxPriceTick: 620,
       },
-      0,
+      MOCK_COMMIT_MS - 2_000,
     );
   }
 
@@ -146,11 +147,12 @@ export class MockApi implements VenueApi {
 
   async postRfmRequest(req: NewRfmRequest): Promise<RfmRequest> {
     const rt = this.rfm.launch(req);
+    rt.request.txHash = fakeHash(); // G6 parity: the postRequest tx
     return rt.request;
   }
 
   private tx(): TxStatus {
-    return { hash: fakeHash(), status: "MINED" };
+    return { hash: fakeHash(), status: "confirmed" };
   }
 
   async faucet(amount: string): Promise<TxStatus> {
@@ -169,7 +171,7 @@ export class MockApi implements VenueApi {
     return this.tx();
   }
   async getTxStatus(hash: string): Promise<TxStatus> {
-    return { hash, status: "INDEXED" };
+    return { hash, status: "confirmed" };
   }
 
   subscribe(channel: string, cb: (ev: WsEvent) => void): () => void {
@@ -200,8 +202,5 @@ export class MockApi implements VenueApi {
   /** Mock-only extras used by the auction visualizer. */
   rfmRuntime(id: RequestId): RfmRuntime | undefined {
     return this.rfm.get(id);
-  }
-  walletBalance(): string {
-    return this.venue.wallet;
   }
 }

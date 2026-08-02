@@ -1,5 +1,7 @@
 // Standalone venue simulation for mock mode: balances, books, fills, an MM bot
 // quoting every live market, and the channel/seq plumbing of the real WS contract.
+// Wire shapes mirror the as-built backend (orders outcome/side/price, book levels
+// {price,size}, trades as lists with yesBasisTick, envelope field `type`).
 
 import type {
   Balances,
@@ -22,7 +24,7 @@ interface SimOrder extends Order {
 
 export interface SimMarket extends Market {
   mid: number;
-  orders: SimOrder[]; // resting orders, both owners
+  orders: SimOrder[]; // resting MM orders
   trades: Trade[];
 }
 
@@ -52,7 +54,14 @@ export class MockVenue {
     const s = this.seqs.get(channel) ?? { generation: 1, seq: 0 };
     s.seq += 1;
     this.seqs.set(channel, s);
-    const ev: WsEvent = { channel, kind: "delta", generation: s.generation, seq: s.seq, prevSeq: s.seq - 1, data };
+    const ev: WsEvent = {
+      channel,
+      type: channel.split(":")[0],
+      generation: s.generation,
+      seq: s.seq,
+      prevSeq: s.seq - 1,
+      data,
+    };
     for (const cb of cbs) cb(ev);
   }
 
@@ -65,7 +74,9 @@ export class MockVenue {
     set.add(cb);
     const s = this.seqs.get(channel) ?? { generation: 1, seq: 0 };
     this.seqs.set(channel, s);
-    queueMicrotask(() => cb({ channel, kind: "snapshot", generation: s.generation, seq: s.seq, data: snapshot() }));
+    queueMicrotask(() =>
+      cb({ channel, type: "snapshot", generation: s.generation, seq: s.seq, data: snapshot() }),
+    );
     return () => {
       set.delete(cb);
       if (set.size === 0) this.listeners.delete(channel);
@@ -76,21 +87,16 @@ export class MockVenue {
 
   balances(): Balances {
     const reserved = this.userOrders
-      .filter((o) => o.status === "OPEN")
-      .reduce((acc, o) => acc + this.reserveOf(o), 0n);
+      .filter((o) => o.status === "OPEN" && o.side === "BUY")
+      .reduce((acc, o) => acc + (BigInt(o.remaining) * BigInt(o.price ?? 0)) / 1000n, 0n);
     const free = BigInt(this.chainFree);
     return {
       chainFree: this.chainFree,
       reserved: reserved.toString(),
       available: (free - reserved).toString(),
+      wallet: this.wallet,
       positions: [...this.positions.values()].filter((p) => p.size !== "0"),
     };
-  }
-
-  private reserveOf(o: SimOrder): bigint {
-    const remaining = BigInt(o.size) - BigInt(o.filled);
-    if (o.direction.startsWith("BUY")) return (remaining * BigInt(o.tick ?? 0)) / 1000n;
-    return 0n; // sells reserve tokens, not USDC
   }
 
   faucet(amount: string): void {
@@ -112,55 +118,72 @@ export class MockVenue {
   // ----- markets + book -----
 
   addMarket(m: Omit<SimMarket, "orders" | "trades">): SimMarket {
-    const market: SimMarket = { ...m, orders: this.mmBook(m.mid), trades: [] };
+    const market: SimMarket = { ...m, orders: this.mmBook(m.marketId, m.mid), trades: [] };
     this.markets.push(market);
     return market;
   }
 
-  private mmBook(mid: number): SimOrder[] {
+  private mmBook(marketId: string, mid: number): SimOrder[] {
     const out: SimOrder[] = [];
     for (let i = 0; i < 5; i++) {
-      out.push(this.mkMmOrder("BUY_YES", mid - (i + 1) * 12, LEVEL_SIZES[i]));
-      out.push(this.mkMmOrder("SELL_YES", mid + (i + 1) * 12, LEVEL_SIZES[i]));
+      out.push(this.mkMm(marketId, "BUY", mid - (i + 1) * 12, LEVEL_SIZES[i]));
+      out.push(this.mkMm(marketId, "SELL", mid + (i + 1) * 12, LEVEL_SIZES[i]));
     }
     return out;
   }
 
-  private mkMmOrder(direction: "BUY_YES" | "SELL_YES", tick: number, size: string): SimOrder {
+  private mkMm(marketId: string, side: "BUY" | "SELL", price: number, size: string): SimOrder {
     return {
       orderId: `mm-${lid()}`,
-      marketId: "",
-      direction,
-      type: "LIMIT",
-      tick: Math.min(990, Math.max(10, tick)),
+      marketId,
+      outcome: "YES",
+      side,
       size,
-      filled: "0",
+      remaining: size,
+      price: Math.min(990, Math.max(10, price)),
+      type: "LIMIT",
       status: "OPEN",
       createdAt: new Date().toISOString(),
       owner: "mm",
     };
   }
 
-  bookOf(m: SimMarket): Book {
-    const live = [...m.orders, ...this.userOrders.filter((o) => o.marketId === m.marketId && o.status === "OPEN")];
-    const agg = (dirs: string[], pred: (t: number) => boolean, sort: (a: number, b: number) => number): BookLevel[] => {
-      const byTick = new Map<number, bigint>();
-      for (const o of live) {
-        if (!dirs.includes(o.direction) || o.tick === null || !pred(o.tick)) continue;
-        byTick.set(o.tick, (byTick.get(o.tick) ?? 0n) + (BigInt(o.size) - BigInt(o.filled)));
-      }
-      return [...byTick.entries()]
-        .sort((a, b) => sort(a[0], b[0]))
+  private openOrders(m: SimMarket, excludeId?: string): SimOrder[] {
+    return [
+      ...m.orders,
+      ...this.userOrders.filter((o) => o.marketId === m.marketId && o.status === "OPEN" && o.orderId !== excludeId),
+    ];
+  }
+
+  bookOf(m: SimMarket, excludeId?: string): Book {
+    const live = this.openOrders(m, excludeId);
+    // every order expressed in canonical YES basis:
+    // BUY YES p -> bid p · SELL YES p -> ask p · BUY NO p -> ask 1000-p · SELL NO p -> bid 1000-p
+    const bids = new Map<number, bigint>();
+    const asks = new Map<number, bigint>();
+    for (const o of live) {
+      if (o.price === null) continue;
+      const yesTick = o.outcome === "YES" ? o.price : 1000 - o.price;
+      const book = o.side === "BUY" ? bids : asks;
+      book.set(yesTick, (book.get(yesTick) ?? 0n) + BigInt(o.remaining));
+    }
+    const toLevels = (map: Map<number, bigint>, desc: boolean): BookLevel[] =>
+      [...map.entries()]
+        .sort((a, b) => (desc ? b[0] - a[0] : a[0] - b[0]))
         .slice(0, 8)
-        .map(([tick, size]) => ({ tick, size: size.toString() }));
-    };
-    // YES basis: bids = BUY_YES resting, asks = SELL_YES resting. NO is the complement projection.
-    const yesBids = agg(["BUY_YES"], () => true, (a, b) => b - a);
-    const yesAsks = agg(["SELL_YES"], () => true, (a, b) => a - b);
-    const noBids: BookLevel[] = yesAsks.map((l) => ({ tick: 1000 - l.tick, size: l.size })).sort((a, b) => b.tick - a.tick);
-    const noAsks: BookLevel[] = yesBids.map((l) => ({ tick: 1000 - l.tick, size: l.size })).sort((a, b) => a.tick - b.tick);
+        .map(([price, size]) => ({ price, size: size.toString() }));
+    const yesBids = toLevels(bids, true);
+    const yesAsks = toLevels(asks, false);
+    const noBids: BookLevel[] = yesAsks.map((l) => ({ price: 1000 - l.price, size: l.size })).sort((a, b) => b.price - a.price);
+    const noAsks: BookLevel[] = yesBids.map((l) => ({ price: 1000 - l.price, size: l.size })).sort((a, b) => a.price - b.price);
     const s = this.seqs.get(`book:${m.marketId}`) ?? { generation: 1, seq: 0 };
-    return { marketId: m.marketId, yes: { bids: yesBids, asks: yesAsks }, no: { bids: noBids, asks: noAsks }, generation: s.generation, seq: s.seq };
+    return {
+      marketId: m.marketId,
+      yes: { bids: yesBids, asks: yesAsks },
+      no: { bids: noBids, asks: noAsks },
+      generation: s.generation,
+      seq: s.seq,
+    };
   }
 
   // ----- orders + fills -----
@@ -171,11 +194,12 @@ export class MockVenue {
     const o: SimOrder = {
       orderId: `${USER}-${lid()}`,
       marketId: order.marketId,
-      direction: order.direction,
-      type: "LIMIT",
-      tick: order.tick ?? null,
+      outcome: order.outcome,
+      side: order.side,
       size: order.size,
-      filled: "0",
+      remaining: order.size,
+      price: order.price,
+      type: order.type,
       status: "OPEN",
       createdAt: new Date().toISOString(),
       owner: USER,
@@ -183,57 +207,50 @@ export class MockVenue {
     this.assertFundable(o);
     this.userOrders.push(o);
     this.tryFill(m, o);
-    this.emit(`user:${this.sessionAddr}`, { kind: "order", order: this.publicOrder(o) });
+    this.emit(`user:${this.sessionAddr}`, { order: this.publicOrder(o) });
     return o;
   }
 
   private assertFundable(o: SimOrder): void {
-    if (o.direction.startsWith("BUY")) {
-      const cost = (BigInt(o.size) * BigInt(o.tick ?? 0)) / 1000n;
+    if (o.side === "BUY") {
+      const cost = (BigInt(o.size) * BigInt(o.price ?? 0)) / 1000n;
       if (cost > BigInt(this.balances().available)) throw new Error("insufficient available balance");
     } else {
-      const outcome = o.direction.endsWith("YES") ? "YES" : "NO";
-      const pos = this.positions.get(`${o.marketId}:${outcome}`);
+      const pos = this.positions.get(`${o.marketId}:${o.outcome}`);
       if (!pos || BigInt(pos.size) < BigInt(o.size)) throw new Error("insufficient position");
     }
   }
 
+  /** Best executable price for taker order o, in o's own tick basis, excluding itself. */
+  crossPrice(m: SimMarket, o: SimOrder): number | null {
+    const book = this.bookOf(m, o.orderId);
+    const levels =
+      o.side === "BUY"
+        ? o.outcome === "YES"
+          ? book.yes.asks
+          : book.no.asks
+        : o.outcome === "YES"
+          ? book.yes.bids
+          : book.no.bids;
+    return levels[0]?.price ?? null;
+  }
+
   private tryFill(m: SimMarket, o: SimOrder): void {
-    const book = this.bookOf(m);
-    const buy = o.direction.startsWith("BUY");
-    const t = o.tick ?? 0;
-    const crossTick = this.crossPrice(m, o);
-    const crosses = buy ? t >= crossTick : t <= crossTick;
-    void book;
-    if (!crosses || crossTick <= 0) return;
-    this.applyFill(m, o, crossTick);
+    if (o.price === null) return;
+    const cross = this.crossPrice(m, o);
+    if (cross === null) return;
+    const crosses = o.side === "BUY" ? o.price >= cross : o.price <= cross;
+    if (crosses) this.applyFill(m, o, cross);
   }
 
-  /** Best executable tick for taker order o, expressed in o's own tick basis. */
-  crossPrice(m: SimMarket, o: SimOrder): number {
-    const bestBid = m.mid - 12;
-    const bestAsk = m.mid + 12;
-    switch (o.direction) {
-      case "BUY_YES":
-        return bestAsk;
-      case "SELL_YES":
-        return bestBid;
-      case "BUY_NO":
-        return 1000 - bestBid; // NO ask = complement of YES bid
-      case "SELL_NO":
-        return 1000 - bestAsk;
-    }
-  }
-
-  applyFill(m: SimMarket, o: SimOrder, tick: number): void {
-    o.filled = o.size;
+  applyFill(m: SimMarket, o: SimOrder, price: number): void {
+    o.remaining = "0";
     o.status = "FILLED";
     const size = BigInt(o.size);
-    const cost = (size * BigInt(tick)) / 1000n;
-    const outcome = o.direction.endsWith("YES") ? "YES" : "NO";
-    const key = `${o.marketId}:${outcome}`;
-    const pos = this.positions.get(key) ?? { marketId: o.marketId, outcome, size: "0" };
-    if (o.direction.startsWith("BUY")) {
+    const cost = (size * BigInt(price)) / 1000n;
+    const key = `${o.marketId}:${o.outcome}`;
+    const pos = this.positions.get(key) ?? { marketId: o.marketId, outcome: o.outcome, size: "0" };
+    if (o.side === "BUY") {
       this.chainFree = (BigInt(this.chainFree) - cost).toString();
       pos.size = (BigInt(pos.size) + size).toString();
     } else {
@@ -243,17 +260,16 @@ export class MockVenue {
     this.positions.set(key, pos);
     const trade: Trade = {
       marketId: o.marketId,
-      tick,
+      yesBasisTick: o.outcome === "YES" ? price : 1000 - price,
       size: o.size,
-      takerDirection: o.direction,
       at: new Date().toISOString(),
       txHash: `0x${lid()}${lid()}${lid()}`,
     };
     m.trades.unshift(trade);
-    m.lastTradeTick = outcome === "YES" ? tick : 1000 - tick;
-    this.emit(`trades:${o.marketId}`, trade);
+    m.lastTradeTick = trade.yesBasisTick;
+    this.emit(`trades:${o.marketId}`, [trade]);
     this.emit(`book:${o.marketId}`, this.bookOf(m));
-    this.emit(`user:${this.sessionAddr}`, { kind: "fill", order: this.publicOrder(o), trade });
+    this.emit(`user:${this.sessionAddr}`, { order: this.publicOrder(o), fill: trade });
   }
 
   cancel(orderId: string): void {
@@ -261,7 +277,7 @@ export class MockVenue {
     if (o && o.status === "OPEN") {
       o.status = "CANCELLED";
       this.emit(`book:${o.marketId}`, this.bookOf(this.markets.find((m) => m.marketId === o.marketId)!));
-      this.emit(`user:${this.sessionAddr}`, { kind: "order", order: this.publicOrder(o) });
+      this.emit(`user:${this.sessionAddr}`, { order: this.publicOrder(o) });
     }
   }
 
@@ -277,25 +293,23 @@ export class MockVenue {
       if (m.status !== "LIVE") continue;
       m.mid = Math.min(970, Math.max(30, m.mid + Math.round((Math.random() - 0.5) * 14)));
       m.midTick = m.mid;
-      m.orders = this.mmBook(m.mid);
+      m.orders = this.mmBook(m.marketId, m.mid);
       this.emit(`book:${m.marketId}`, this.bookOf(m));
       // sweep resting user orders that now cross
       for (const o of this.userOrders) {
         if (o.marketId === m.marketId && o.status === "OPEN") this.tryFill(m, o);
       }
       if (Math.random() < 0.3) {
-        const buy = Math.random() < 0.5;
         const trade: Trade = {
           marketId: m.marketId,
-          tick: buy ? m.mid + 12 : m.mid - 12,
+          yesBasisTick: Math.random() < 0.5 ? m.mid + 12 : m.mid - 12,
           size: ((Math.floor(Math.random() * 40) + 5) * 10 ** 6).toString(),
-          takerDirection: buy ? "BUY_YES" : "SELL_YES",
           at: new Date().toISOString(),
           txHash: `0x${lid()}${lid()}${lid()}`,
         };
         m.trades.unshift(trade);
-        m.lastTradeTick = trade.tick;
-        this.emit(`trades:${m.marketId}`, trade);
+        m.lastTradeTick = trade.yesBasisTick;
+        this.emit(`trades:${m.marketId}`, [trade]);
       }
     }
   }

@@ -54,11 +54,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const refreshBalances = useCallback(async () => {
     if (!api) return;
-    setBalances(await api.getBalances());
-    if (api.mode === "mock") {
-      const { MockApi } = await import("./apiMock");
-      if (api instanceof MockApi) setWallet(api.walletBalance());
-    }
+    const b = await api.getBalances();
+    setBalances(b);
+    setWallet(b.wallet ?? null);
   }, [api]);
 
   const refreshMarkets = useCallback(async () => {
@@ -130,8 +128,8 @@ export function useChannel(channel: string | null, onEvent: (ev: WsEvent) => voi
 export function useBook(marketId: string | null): Book | null {
   const [book, setBook] = useState<Book | null>(null);
   useChannel(marketId ? `book:${marketId}` : null, (ev) => {
-    if (ev.kind === "snapshot") setBook(ev.data as Book);
-    else setBook(ev.data as Book); // mock sends full books as deltas; real sends deltas applied server-side snapshot-first
+    // mock and real both deliver full-book frames (snapshot or delta)
+    setBook(ev.data as Book);
   });
   return book;
 }
@@ -139,8 +137,9 @@ export function useBook(marketId: string | null): Book | null {
 export function useTrades(marketId: string | null): Trade[] {
   const [trades, setTrades] = useState<Trade[]>([]);
   useChannel(marketId ? `trades:${marketId}` : null, (ev) => {
-    if (ev.kind === "snapshot") setTrades(ev.data as Trade[]);
-    else setTrades((t) => [ev.data as Trade, ...t].slice(0, 50));
+    if (ev.type === "snapshot") setTrades(ev.data as Trade[]);
+    // the trades channel pushes a LIST per frame (INTEGRATION_CONTRACT)
+    else setTrades((t) => [...(ev.data as Trade[]), ...t].slice(0, 50));
   });
   return trades;
 }
@@ -156,7 +155,7 @@ export function useRfm(requestId: string | null): RfmState {
   const [state, setState] = useState<RfmState>({ request: null, reveals: [], final: null, bornMarketId: null });
   const { notifyBorn } = useStore();
   useChannel(requestId ? `rfm:${requestId}` : null, (ev) => {
-    if (ev.kind === "snapshot") {
+    if (ev.type === "snapshot") {
       const d = ev.data as RfmState;
       setState(d ? { ...d, reveals: [...(d.reveals ?? [])] } : d);
       return;
