@@ -17,6 +17,8 @@ export function marketCategory(questionText: string): MarketCategory {
   return "generic";
 }
 
-export function marketImageSrc(questionText: string): string {
-  return `/markets/${marketCategory(questionText)}.svg`;
+export function marketImageSrc(questionText: string, ext: "png" | "svg" = "png"): string {
+  // raster preferred (richer); svg is the vector fallback; the card degrades
+  // to its gradient placeholder if both are absent
+  return `/markets/${marketCategory(questionText)}.${ext}`;
 }

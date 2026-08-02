@@ -22,7 +22,7 @@ export default function MarketCard({
   onOpen?: () => void;
 }) {
   const yes = market.midTick;
-  const [imgOk, setImgOk] = useState(true);
+  const [imgStage, setImgStage] = useState<"png" | "svg" | "none">("png");
   const cat = marketCategory(market.questionText);
   return (
     <button
@@ -36,12 +36,12 @@ export default function MarketCard({
         <span className="absolute inset-0 flex items-center justify-center font-display text-5xl font-semibold uppercase text-ink-700">
           {cat[0]}
         </span>
-        {imgOk && (
+        {imgStage !== "none" && (
           <img
-            src={marketImageSrc(market.questionText)}
+            src={marketImageSrc(market.questionText, imgStage)}
             alt=""
             loading="lazy"
-            onError={() => setImgOk(false)}
+            onError={() => setImgStage((s) => (s === "png" ? "svg" : "none"))}
             className="absolute inset-0 h-full w-full object-cover"
           />
         )}
