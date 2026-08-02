@@ -183,6 +183,34 @@ public class SettlementTests
     // ------------------------------------------------------------ timeout reconciliation
 
     [Fact]
+    public async Task Batcher_StillPendingPastOldExpiry_LaterMines_NoDoubleExecute()
+    {
+        var gateway = new ScriptedGateway();
+        gateway.Outcomes.Enqueue(new SettlementReceipt(TxStatus.Unknown, null)); // initial submit timeout
+        // Far more pending re-checks than the OLD 30-check expiry cap, then the tx finally mines.
+        for (var i = 0; i < 40; i++) gateway.StatusSequence.Enqueue(TxStatus.Pending);
+        gateway.StatusSequence.Enqueue(TxStatus.Confirmed);
+        gateway.PendingTx = true; // the tx stays in the mempool the whole time
+
+        var coordinator = new RecordingCoordinator();
+        var batcher = new SettlementBatcher(gateway, coordinator, TestData.Operator, reconcileIntervalMs: 10);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var run = Task.Run(() => batcher.RunAsync(cts.Token));
+
+        for (var i = 0; i < 2; i++) batcher.Enqueue(Match(i));
+
+        await WaitUntilAsync(() => coordinator.Confirmed.Count == 1, TimeSpan.FromSeconds(8));
+        cts.Cancel();
+        try { await run; } catch (OperationCanceledException) { /* expected */ }
+
+        // 40 pending checks (> the old 30-check expiry) with NO unwind: the late-mined tx is
+        // confirmed, its reservation was never prematurely released (no CancelAll/Repair).
+        Assert.Single(coordinator.Confirmed);
+        Assert.Empty(coordinator.CancelledAll);
+        Assert.Empty(coordinator.Repaired);
+    }
+
+    [Fact]
     public async Task Batcher_BatchInFlightWhenResolutionInitiates_DoesNotSettle()
     {
         var gateway = new ScriptedGateway();
@@ -369,9 +397,10 @@ public class SettlementTests
         public Task<string> SubmitCancelRequestAsync(string user, BigInteger requestId, CancellationToken ct) => throw new NotImplementedException();
         public Task<string> SubmitRedeemAsync(string user, string marketId, BigInteger amt, CancellationToken ct) => throw new NotImplementedException();
         public Task<TxStatus> TxStatusAsync(string txHash, CancellationToken ct)
-            => Task.FromResult(TxStatusOverride);
+            => Task.FromResult(StatusSequence.Count > 0 ? StatusSequence.Dequeue() : TxStatusOverride);
 
         public TxStatus TxStatusOverride { get; set; } = TxStatus.Pending;
+        public Queue<TxStatus> StatusSequence { get; } = new();
     }
 
     private sealed class RecordingCoordinator : ISettlementCoordinator

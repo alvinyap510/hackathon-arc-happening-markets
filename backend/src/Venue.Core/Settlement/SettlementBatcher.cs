@@ -23,8 +23,7 @@ public sealed class SettlementBatcher
     public const int MaxBatch = 8;
     private static readonly TimeSpan FlushInterval = TimeSpan.FromMilliseconds(500);
     private const int MaxRepairAttempts = 3;
-    private const int MaxReconcileChecks = 30;          // ~30 s of re-checks after a submit timeout
-    private static readonly TimeSpan ReconcileInterval = TimeSpan.FromSeconds(1);
+    private readonly TimeSpan _reconcileInterval = TimeSpan.FromSeconds(1);
 
     private readonly IChainGateway _gateway;
     private readonly ISettlementCoordinator _core;
@@ -34,11 +33,12 @@ public sealed class SettlementBatcher
     private long _batchAttempt;
     private int _busy; // 1 while a batch is submitted/awaiting; read by AwaitIdleAsync
 
-    public SettlementBatcher(IChainGateway gateway, ISettlementCoordinator core, string operatorAddress)
+    public SettlementBatcher(IChainGateway gateway, ISettlementCoordinator core, string operatorAddress, int reconcileIntervalMs = 1000)
     {
         _gateway = gateway;
         _core = core;
         _operatorAddress = operatorAddress;
+        _reconcileInterval = TimeSpan.FromMilliseconds(reconcileIntervalMs);
     }
 
     public int PendingCount => _queue.Count;
@@ -191,16 +191,17 @@ public sealed class SettlementBatcher
     }
 
     /// <summary>
-    /// Reconcile a timed-out submission: re-check the receipt, and only unwind when the tx is
-    /// provably not mined (confirmed/reverted resolve it; a tx that leaves the mempool without a
-    /// receipt was replaced/expired). A tx still pending at the cap is treated as expired for the
-    /// demo (documented) rather than hanging the settlement slot forever.
+    /// Reconcile a timed-out submission. NEVER unwinds a tx that could still mine: keep waiting
+    /// until it is confirmed, reverted, or PROVABLY not-going-to-mine (its nonce was consumed by a
+    /// different tx, or the node dropped/replaced it). A still-pending-unknown tx stays reserved —
+    /// it is never declared expired on a wall-clock timer, so a late mine cannot double-execute
+    /// against a replacement order.
     /// </summary>
     private async Task<SettlementReceipt> ReconcileAsync(string txHash, CancellationToken ct)
     {
-        for (var i = 0; i < MaxReconcileChecks; i++)
+        while (true)
         {
-            await Task.Delay(ReconcileInterval, ct);
+            await Task.Delay(_reconcileInterval, ct); // throws OperationCanceledException on shutdown
             var status = await _gateway.TxStatusAsync(txHash, ct);
             if (status == TxStatus.Confirmed) return new SettlementReceipt(TxStatus.Confirmed, null);
             if (status == TxStatus.Reverted)
@@ -210,11 +211,10 @@ public sealed class SettlementBatcher
             }
             if (!await _gateway.IsTransactionPendingAsync(txHash, ct))
             {
-                Console.WriteLine($"settle: tx {txHash} left the mempool unmined -> reconciling as expired");
+                Console.WriteLine($"settle: tx {txHash} provably not mining (replaced/expired) -> unwind");
                 return new SettlementReceipt(TxStatus.Unknown, null);
             }
+            // still pending: it could still mine -> keep waiting, keep the reservations held
         }
-        Console.WriteLine($"settle: tx {txHash} still pending after reconciliation window -> treating as expired");
-        return new SettlementReceipt(TxStatus.Unknown, null);
     }
 }
