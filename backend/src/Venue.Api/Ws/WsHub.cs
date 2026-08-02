@@ -357,9 +357,15 @@ public sealed class WsHub : IEventSink
 
         public async Task<Func<Task<object>>?> DequeueAsync(CancellationToken ct)
         {
-            if (_outbound.TryDequeue(out var frame)) return frame;
-            await _signal.WaitAsync(ct);
-            return _outbound.TryDequeue(out var next) ? next : null;
+            // Loop on spurious wakes: Enqueue releases the semaphore even when the
+            // writer took the item via the lock-free TryDequeue path, so the count
+            // drifts ahead of the queue. Returning null here made WriteLoopAsync
+            // break and zombie the connection after any burst of back-to-back frames.
+            while (true)
+            {
+                if (_outbound.TryDequeue(out var frame)) return frame;
+                await _signal.WaitAsync(ct);
+            }
         }
 
         public void Dispose()
