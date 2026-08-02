@@ -41,7 +41,7 @@ export interface VenueApi {
   faucet(amount: string): Promise<TxStatus>;
   deposit(amount: string): Promise<TxStatus>;
   withdraw(amount: string): Promise<TxStatus>;
-  redeem(marketId: MarketId): Promise<TxStatus>;
+  redeem(marketId: MarketId, amount: string): Promise<TxStatus>;
   getTxStatus(hash: string): Promise<TxStatus>;
 
   /** Subscribe to a WS channel (book:<mkt>, trades:<mkt>, rfm:<reqId>, user:<addr>). */

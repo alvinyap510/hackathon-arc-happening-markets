@@ -38,13 +38,15 @@ export interface TokenPosition {
   size: string;
 }
 
-/** Wire: GET /v1/balances. G4 adds `wallet` (on-chain MockUSDC balance). */
+/** Wire: GET /v1/balances. G4 adds `wallet` (on-chain MockUSDC balance).
+ *  Positions carry marketId + outcome (lowercase) alongside tokenId; the
+ *  composite tokenId parse is only a fallback for older payloads. */
 export interface BalancesView {
   chainFree: string;
   reserved: string;
   available: string;
   wallet?: string;
-  positions: { tokenId: string; amount: string }[];
+  positions: { tokenId: string; marketId?: string; outcome?: string; amount: string }[];
 }
 
 export interface Balances {
@@ -63,13 +65,13 @@ export interface MarketView {
   exists: boolean;
   closing: boolean;
   resolved: boolean;
-  winningOutcome?: OutcomeSide;
+  winningOutcome?: string; // lowercase on the wire; normalized in toMarket
   born?: { requestId: RequestId; marginalYesTick: number; vwapYesTick: number; filled: string };
   bornFromRfm?: boolean; // G5
   midTick?: number | null; // G5, server-computed, null if one-sided
   questionText?: string; // G1
   resolutionSource?: string; // G1
-  closeTime?: string; // G1
+  closeTime?: string; // G1, unix-seconds string
 }
 
 /** Internal market form used across the UI. */
@@ -137,16 +139,59 @@ export interface Order {
 
 // ----- trades -----
 
-/** Wire: TradeRecord. The trades:<mkt> channel pushes a LIST of these per frame. */
+/** Wire: trades delta item (WS Fills frame) or REST trade record
+ *  ({tradeId, tradeClass, size, yesBasisTick, batchId, at: unixSec}). */
+export interface FillView {
+  tradeId?: string;
+  marketId?: MarketId;
+  tradeClass?: string;
+  outcome?: string | null; // delta only, lowercase; NO => yesBasis = 1000 - outcomeTick
+  outcomeTick?: number; // delta only, on the outcome basis
+  yesBasisTick?: number; // REST form
+  size: string;
+  at?: number | string; // REST: unix seconds; mock: ISO
+  txHash?: string;
+}
+
+/** Internal trade form. The trades:<mkt> channel pushes a LIST per frame. */
 export interface Trade {
   marketId: MarketId;
   yesBasisTick: number;
   size: string;
-  at: string;
+  at: string; // ISO
   txHash?: string;
 }
 
 // ----- RFM -----
+
+/**
+ * Wire: RfmView (REST /v1/rfm/requests[/:id]) and the FLAT full-state rfm WS
+ * frame (WsHub BuildRfmAsync). Differences from the internal RfmRequest:
+ * `market` (not marketHash), `escrowAmount` (not escrow), no `bond`, lowercase
+ * phase/side, numeric-string commitCount/maxPriceTick, unix-seconds deadlines,
+ * nested `born` (not bornMarketId). The WS frame omits questionText,
+ * resolutionSource, closeTime and fills (REST only).
+ */
+export interface RfmView {
+  requestId: string;
+  market?: string;
+  questionText?: string | null;
+  resolutionSource?: string | null;
+  closeTime?: string | null; // unix-seconds string
+  side?: string; // lowercase
+  quantity?: string;
+  maxPriceTick?: string; // numeric string
+  minMatch?: string;
+  commitDeadline?: string; // unix-seconds string
+  revealDeadline?: string; // unix-seconds string
+  escrowAmount?: string;
+  minQuoteSize?: string;
+  commitCount?: string; // numeric string
+  phase?: string; // lowercase
+  born?: { marketId: MarketId; marginalYesTick: number; vwapYesTick: number; filled?: string | null } | null;
+  reveals?: { mm: Address; tick: string; size: string; inRange: boolean }[];
+  fills?: { mm: Address; tick: string; size: string }[]; // REST only
+}
 
 export interface RfmRequest {
   requestId: RequestId;

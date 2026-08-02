@@ -20,9 +20,10 @@ export default function TradingView({ market, onBack }: { market: Market; onBack
   const mid = market.midTick;
 
   const redeem = async () => {
+    if (!winningPos) return;
     setRedeemBusy(true);
     try {
-      const tx = await api.redeem(market.marketId);
+      const tx = await api.redeem(market.marketId, winningPos.size);
       setRedeemTx(tx.hash);
       await Promise.all([refreshBalances(), refreshMarkets()]);
     } finally {

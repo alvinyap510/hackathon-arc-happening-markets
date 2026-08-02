@@ -167,7 +167,7 @@ export class MockApi implements VenueApi {
     this.venue.withdraw(amount);
     return this.tx();
   }
-  async redeem(_marketId: MarketId): Promise<TxStatus> {
+  async redeem(_marketId: MarketId, _amount: string): Promise<TxStatus> {
     return this.tx();
   }
   async getTxStatus(hash: string): Promise<TxStatus> {
