@@ -13,10 +13,6 @@ import type {
   WsEvent,
 } from "./types";
 
-export interface SimConfig {
-  now: () => number;
-}
-
 const LEVEL_SIZES = ["420000000", "260000000", "180000000", "120000000", "80000000"];
 const USER = "user";
 
@@ -44,8 +40,6 @@ export class MockVenue {
   private seqs = new Map<string, { generation: number; seq: number }>();
   private listeners = new Map<string, Set<(ev: WsEvent) => void>>();
   private timer: ReturnType<typeof setInterval> | null = null;
-
-  constructor(private cfg: SimConfig) {}
 
   start(): void {
     if (this.timer) return;

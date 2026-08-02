@@ -199,16 +199,18 @@
     @apply text-[10px] font-semibold tracking-[0.14em] uppercase text-ink-300;
   }
 
-  .btn {
+  .btn,
+  .btn-gold,
+  .btn-ghost {
     @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40;
   }
 
   .btn-gold {
-    @apply btn bg-gold-400 text-ink-950 hover:bg-gold-300;
+    @apply bg-gold-400 text-ink-950 hover:bg-gold-300;
   }
 
   .btn-ghost {
-    @apply btn border border-ink-600 bg-ink-800 text-paper-200 hover:border-ink-500 hover:text-paper-100;
+    @apply border border-ink-600 bg-ink-800 text-paper-200 hover:border-ink-500 hover:text-paper-100;
   }
 
   .input {

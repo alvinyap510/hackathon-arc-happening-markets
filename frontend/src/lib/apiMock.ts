@@ -44,7 +44,7 @@ function fakeHash(): string {
 
 export class MockApi implements VenueApi {
   readonly mode = "mock" as const;
-  private venue = new MockVenue({ now: () => Date.now() });
+  private venue = new MockVenue();
   private rfm = new RfmManager(this.venue);
 
   constructor() {

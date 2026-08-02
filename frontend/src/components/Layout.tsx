@@ -50,6 +50,7 @@ export default function Layout({
           {TABS.map((t) => (
             <button
               key={t.id}
+              data-nav={t.id}
               onClick={() => onTab(t.id)}
               className={`group relative rounded-lg px-3 py-2.5 text-left transition-colors ${
                 tab === t.id ? "bg-ink-800 text-paper-100" : "text-ink-300 hover:bg-ink-850 hover:text-paper-200"
