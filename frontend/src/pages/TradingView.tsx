@@ -97,7 +97,7 @@ export default function TradingView({ market, onBack }: { market: Market; onBack
               {myOrders.map((o) => (
                 <div key={o.orderId} className="flex items-center justify-between rounded bg-ink-900 px-2 py-1.5 text-xs">
                   <span className="num text-paper-200">
-                    {o.side} {o.outcome} {formatUsdc(o.remaining, 0)} @ {o.price ?? "mkt"}
+                    {o.side} {o.outcome} {formatUsdc(o.remaining, 0)} @ {o.price === null ? "mkt" : tickToPct(o.price)}
                   </span>
                   <button onClick={() => void api.cancelOrder(o.orderId)} className="text-[11px] font-semibold text-no-400 hover:text-no-300">
                     Cancel
@@ -123,7 +123,7 @@ export default function TradingView({ market, onBack }: { market: Market; onBack
                 );
               })}
             </div>
-            <p className="mt-2 text-[10px] text-ink-500">Market value at current mid. Settlement is 1:1 to the winner.</p>
+            <p className="mt-2 text-[10px] text-ink-500">Marked at mid. Settles 1:1 to the winner.</p>
           </div>
         </div>
       </div>

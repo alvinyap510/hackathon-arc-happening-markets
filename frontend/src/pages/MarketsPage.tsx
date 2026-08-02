@@ -27,7 +27,7 @@ export default function MarketsPage({
 
       <div className="grid gap-4 md:grid-cols-2">
         {live.map((m) => (
-          <MarketCard key={m.marketId} market={m} onOpen={() => onSelect(m.marketId)} />
+          <MarketCard key={m.marketId} market={m} hero={m.bornFromRfm} onOpen={() => onSelect(m.marketId)} />
         ))}
       </div>
 

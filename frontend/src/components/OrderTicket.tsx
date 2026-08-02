@@ -28,7 +28,7 @@ export default function OrderTicket({ market, book }: { market: Market; book: Bo
   const { api, refreshBalances } = useStore();
   const [direction, setDirection] = useState<OrderDirection>("BUY_YES");
   const [type, setType] = useState<OrderType>("LIMIT");
-  const [tick, setTick] = useState("500");
+  const [pct, setPct] = useState("50.0");
   const [size, setSize] = useState("100");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +47,8 @@ export default function OrderTicket({ market, book }: { market: Market; book: Bo
     : [];
   const marketTick = touchLevels[0]?.price ?? null;
 
-  const effTick = type === "MARKET" ? marketTick : Number(tick);
+  // ticks are 0.1% steps, so a 1-decimal percent is lossless: tick = pct x 10
+  const effTick = type === "MARKET" ? marketTick : Math.round(Number(pct) * 10);
   const sizeBase = parseUsdc(size);
 
   // limit: single-price quote. market: worst-case sweep across levels (audit: best-touch understates).
@@ -63,7 +64,7 @@ export default function OrderTicket({ market, book }: { market: Market; book: Bo
   const place = async () => {
     setError(null);
     if (sizeBase === null || BigInt(sizeBase) <= 0n) return setError("Enter a size.");
-    if (effTick === null || effTick < 1 || effTick > 999) return setError("No usable price.");
+    if (effTick === null || !Number.isFinite(effTick) || effTick < 1 || effTick > 999) return setError("No usable price.");
     setBusy(true);
     try {
       await api.placeOrder({
@@ -120,12 +121,16 @@ export default function OrderTicket({ market, book }: { market: Market; book: Bo
 
       <div className="mt-3 grid grid-cols-2 gap-2">
         <div>
-          <label className="label-caps">Price (tick)</label>
+          <label className="label-caps">Price (%)</label>
           {type === "LIMIT" ? (
-            <input className="input num mt-1" value={tick} onChange={(e) => setTick(e.target.value.replace(/\D/g, "").slice(0, 4))} />
+            <input
+              className="input num mt-1"
+              value={pct}
+              onChange={(e) => setPct(e.target.value.replace(/[^\d.]/g, "").slice(0, 5))}
+            />
           ) : (
             <div className="panel-inset num mt-1 px-3 py-2 text-sm text-paper-200">
-              {marketTick === null ? "no book" : `${marketTick} (${tickToPct(marketTick)})`}
+              {marketTick === null ? "no book" : tickToPct(marketTick)}
             </div>
           )}
         </div>

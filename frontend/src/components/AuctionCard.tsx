@@ -6,10 +6,11 @@ import PhaseStepper from "./PhaseStepper";
 import BornFlight from "./BornFlight";
 
 function Countdown({ label, deadline, now }: { label: string; deadline: string; now: number }) {
+  const left = timeRemaining(deadline, now);
   return (
     <div className="text-right">
       <div className="label-caps">{label}</div>
-      <div className="num text-xl font-semibold text-gold-300">{timeRemaining(deadline, now)}</div>
+      <div className="num text-xl font-semibold text-gold-300">{left === "0s" ? "closing…" : left}</div>
     </div>
   );
 }
