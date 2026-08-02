@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">Prediction market</title>
+  <desc id="desc">A minimal two-sided market grid divided by a gold price path.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#06080c"/>
+      <stop offset="1" stop-color="#131824"/>
+    </linearGradient>
+    <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#c8a23e" stop-opacity=".12"/>
+      <stop offset="1" stop-color="#c8a23e" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <rect x="304" y="162" width="992" height="576" rx="30" fill="url(#fade)" stroke="#293244" stroke-width="4"/>
+  <g fill="none" stroke="#293244" stroke-width="3">
+    <path d="M304 306h992M304 450h992M304 594h992"/>
+    <path d="M552 162v576M800 162v576M1048 162v576"/>
+  </g>
+  <g fill="#e3ddcf">
+    <rect x="357" y="235" width="152" height="24" rx="12" opacity=".32"/>
+    <rect x="357" y="379" width="114" height="24" rx="12" opacity=".48"/>
+    <rect x="357" y="523" width="178" height="24" rx="12" opacity=".66"/>
+    <rect x="1091" y="235" width="152" height="24" rx="12" opacity=".66"/>
+    <rect x="1129" y="379" width="114" height="24" rx="12" opacity=".48"/>
+    <rect x="1065" y="523" width="178" height="24" rx="12" opacity=".32"/>
+  </g>
+  <path d="M392 650 548 555 684 588 811 415 941 468 1063 332 1210 238" fill="none" stroke="#c8a23e" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="811" cy="415" r="17" fill="#c8a23e"/>
+</svg>

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">Politics market</title>
+  <desc id="desc">A ballot entering a box in front of a minimal civic dome.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#06080c"/>
+      <stop offset="1" stop-color="#0e1219"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="50%" cy="48%" r="46%">
+      <stop stop-color="#c8a23e" stop-opacity=".11"/>
+      <stop offset="1" stop-color="#c8a23e" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <ellipse cx="800" cy="455" rx="520" ry="390" fill="url(#halo)"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M467 498h666M518 476c19-134 130-224 282-224s263 90 282 224" stroke="#293244" stroke-width="14"/>
+    <path d="M800 190v62M683 286v190M917 286v190M586 344v132M1014 344v132" stroke="#5d687e" stroke-width="12"/>
+    <path d="M420 537h760l-66 217H486Z" stroke="#e3ddcf" stroke-width="16"/>
+    <path d="M609 587h382" stroke="#5d687e" stroke-width="14"/>
+    <path d="m673 151 323 91-83 294-323-91Z" fill="#131824" stroke="#e3ddcf" stroke-width="16"/>
+    <path d="m708 337 53 49 112-109" stroke="#c8a23e" stroke-width="20"/>
+  </g>
+</svg>
