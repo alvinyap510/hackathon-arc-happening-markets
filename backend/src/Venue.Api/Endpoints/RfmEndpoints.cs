@@ -1,7 +1,7 @@
-using System.Collections.Concurrent;
 using System.Numerics;
 using Venue.Domain;
 using Venue.Infrastructure;
+using Venue.Rfm;
 using static Venue.Api.Endpoints.EndpointHelpers;
 
 namespace Venue.Api.Endpoints;
@@ -9,9 +9,7 @@ namespace Venue.Api.Endpoints;
 /// <summary>RFM endpoints (PLAN_BACKEND §5): request lifecycle, sealed-quote commit/reveal.</summary>
 public static class RfmEndpoints
 {
-    private static readonly ConcurrentDictionary<(BigInteger RequestId, string User), BigInteger> SaltStore = new();
-
-    public static RouteGroupBuilder MapRfmEndpoints(this IEndpointRouteBuilder app, SessionStore sessions, AppConfig cfg, VenueCore core, Venue.Chain.IChainGateway gateway)
+    public static RouteGroupBuilder MapRfmEndpoints(this IEndpointRouteBuilder app, SessionStore sessions, AppConfig cfg, VenueCore core, Venue.Chain.IChainGateway gateway, SaltService salts)
     {
         var g = app.MapGroup("/v1/rfm").WithTags("rfm");
 
@@ -55,8 +53,9 @@ public static class RfmEndpoints
             var tick = req.PriceTick ?? 0;
             var size = Amount(req.Size);
             if (tick <= 0 || tick >= 1000 || size <= 0) return Results.BadRequest(new { error = "tick/size invalid" });
-            var salt = ParseSalt(req.Salt) ?? RandomSalt();
-            SaltStore[(req.RequestId, user)] = salt;
+            // Deterministic server salt when the client does not supply one: the reveal endpoint
+            // recomputes the SAME salt, so a restart between commit and reveal never strands the bond.
+            var salt = ParseSalt(req.Salt) ?? salts.Derive(req.RequestId, user);
             var commitHash = Hash.QuoteHash(cfg.Chain.ChainId, cfg.Chain.NormalizedRfm, req.RequestId, user, tick, size, salt);
             return await Submit(() => gateway.SubmitCommitQuoteAsync(user, req.RequestId, commitHash, CancellationToken.None));
         });
@@ -67,8 +66,7 @@ public static class RfmEndpoints
             if (user == null) return Results.Unauthorized();
             var tick = req.PriceTick ?? 0;
             var size = Amount(req.Size);
-            var salt = ParseSalt(req.Salt)
-                ?? (SaltStore.TryGetValue((req.RequestId, user), out var stored) ? stored : BigInteger.Zero);
+            var salt = ParseSalt(req.Salt) ?? salts.Derive(req.RequestId, user);
             return await Submit(() => gateway.SubmitRevealQuoteAsync(user, req.RequestId, tick, size, salt, CancellationToken.None));
         });
 
@@ -100,12 +98,6 @@ public static class RfmEndpoints
 
     private static BigInteger? ParseSalt(string? salt)
         => string.IsNullOrWhiteSpace(salt) ? null : BigInteger.TryParse(salt, out var v) ? v : null;
-
-    private static BigInteger RandomSalt()
-    {
-        var bytes = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
-        return new BigInteger(bytes, isUnsigned: true, isBigEndian: true);
-    }
 
     public sealed record PostRequestReq(string? Market, string? Side, string? Quantity, long? MaxPriceTick, string? MinMatch);
     public sealed record CommitReq(BigInteger RequestId, long? PriceTick, string? Size, string? Salt);

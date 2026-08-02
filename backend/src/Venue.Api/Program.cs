@@ -6,6 +6,7 @@ using Venue.Broadcasting;
 using Venue.Chain;
 using Venue.Circle;
 using Venue.Domain;
+using Venue.Rfm;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://0.0.0.0:8080");
@@ -29,6 +30,7 @@ var hub = new WsHub(core);
 core.SetSink(hub);
 
 var sessions = new SessionStore();
+var salts = new SaltService(appCfg.SaltSecret);
 
 builder.Services.AddSingleton(appCfg);
 builder.Services.AddSingleton(gateway);
@@ -46,7 +48,7 @@ app.UseWebSockets();
 
 app.MapUserEndpoints(sessions, appCfg, circle, core, gateway);
 app.MapTradingEndpoints(sessions, appCfg, core, gateway);
-app.MapRfmEndpoints(sessions, appCfg, core, gateway);
+app.MapRfmEndpoints(sessions, appCfg, core, gateway, salts);
 app.MapOpsEndpoints(appCfg, core, gateway);
 
 app.MapGet("/ws", async (HttpContext ctx) =>

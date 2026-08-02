@@ -15,6 +15,7 @@ public sealed class AppConfig
     public required string CircleBaseUrl { get; init; }
     public required int CommitSeconds { get; init; }
     public required int RevealSeconds { get; init; }
+    public required string SaltSecret { get; init; }
 
     public static AppConfig Load(IConfiguration cfg)
     {
@@ -49,6 +50,7 @@ public sealed class AppConfig
             CircleBaseUrl = cfg["Venue:Circle:BaseUrl"] ?? "https://api.circle.com/v1",
             CommitSeconds = cfg.GetValue<int?>("Venue:RfmWindows:CommitSeconds") ?? 120,
             RevealSeconds = cfg.GetValue<int?>("Venue:RfmWindows:RevealSeconds") ?? 60,
+            SaltSecret = cfg["Venue:SaltSecret"] ?? "",
         };
     }
 

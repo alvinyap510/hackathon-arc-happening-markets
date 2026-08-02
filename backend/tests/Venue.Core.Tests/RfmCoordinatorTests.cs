@@ -60,6 +60,28 @@ public class RfmCoordinatorTests
         Assert.Equal(BigInteger.One, finalize);
     }
 
+    [Fact]
+    public void SaltService_SaltSurvivesRestart_WithStableSecret()
+    {
+        // Two instances with the SAME configured secret = the process before/after a restart.
+        var before = new SaltService("the-secret");
+        var after = new SaltService("the-secret");
+        var requestId = new BigInteger(7);
+        var saltBefore = before.Derive(requestId, TestData.Bob);
+        var saltAfter = after.Derive(requestId, TestData.Bob);
+
+        Assert.Equal(saltBefore, saltAfter);
+        Assert.NotEqual(BigInteger.Zero, saltBefore);
+
+        // A different secret derives a different salt (no accidental reuse).
+        Assert.NotEqual(saltBefore, new SaltService("another-secret").Derive(requestId, TestData.Bob));
+
+        // The committed hash is exactly reproducible from the derived salt at reveal time.
+        var commitHash = Hash.QuoteHash(5042002, TestData.Rfm, requestId, TestData.Bob, 600, 1_000_000, saltBefore);
+        var revealHash = Hash.QuoteHash(5042002, TestData.Rfm, requestId, TestData.Bob, 600, 1_000_000, saltAfter);
+        Assert.Equal(commitHash, revealHash);
+    }
+
     private static string Market(int n) => Hash.NormalizeBytes32("0x" + n.ToString("x"));
 
     private sealed class RecordingGateway : IChainGateway
