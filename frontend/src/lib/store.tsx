@@ -137,9 +137,13 @@ export function useBook(marketId: string | null): Book | null {
 export function useTrades(marketId: string | null): Trade[] {
   const [trades, setTrades] = useState<Trade[]>([]);
   useChannel(marketId ? `trades:${marketId}` : null, (ev) => {
-    if (ev.type === "snapshot") setTrades(ev.data as Trade[]);
-    // the trades channel pushes a LIST per frame (INTEGRATION_CONTRACT)
-    else setTrades((t) => [...(ev.data as Trade[]), ...t].slice(0, 50));
+    if (ev.type === "snapshot") {
+      setTrades(Array.isArray(ev.data) ? (ev.data as Trade[]) : []);
+      return;
+    }
+    // the trades channel pushes a LIST per frame (INTEGRATION_CONTRACT), but
+    // settlement/rejection frames carry a non-array payload: skip those
+    if (Array.isArray(ev.data)) setTrades((t) => [...(ev.data as Trade[]), ...t].slice(0, 50));
   });
   return trades;
 }

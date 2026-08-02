@@ -143,7 +143,8 @@ export default function OrderTicket({ market, book }: { market: Market; book: Bo
       </div>
       {partial && (
         <p className="mt-1 text-[11px] text-gold-300">
-          Book depth covers only {formatUsdc(quote.filled.toString(), 0)} tokens; the remainder rests.
+          Book depth covers only {formatUsdc(quote.filled.toString(), 0)} tokens;{" "}
+          {type === "MARKET" ? "the remainder is cancelled (sweep-and-kill)." : "the remainder rests."}
         </p>
       )}
 
