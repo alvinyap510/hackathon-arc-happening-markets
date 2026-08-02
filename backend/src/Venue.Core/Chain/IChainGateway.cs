@@ -49,7 +49,17 @@ public sealed record ChainConfig(
 }
 
 /// <summary>
-/// The chain seam. The indexer fetches logs; the settlement batcher submits whole
+/// Provides a signable account identity for an email ref at session time. Implemented by
+/// DevAccountStore (deterministic backend-held keypair, nethereum/simulated) and by
+/// CircleChainGateway (a dev-controlled Circle SCA). The session endpoint routes by
+/// Venue:WalletProvider.
+/// </summary>
+public interface ISessionProvisioner
+{
+    Task<string> ProvisionAsync(string userRef, CancellationToken ct);
+}
+
+/// <summary>The chain seam. The indexer fetches logs; the settlement batcher submits whole
 /// batches and awaits their outcome; the RFM coordinator cranks finalize; the API
 /// submits user ops (deposits, RFM lifecycle) and reads tx status. One process, one
 /// operator SCA for settlement (serialized nonce). A Simulated implementation feeds

@@ -7,17 +7,16 @@ namespace Venue.Api.Endpoints;
 /// <summary>Session / wallet / bridge / funds endpoints (PLAN_BACKEND §5).</summary>
 public static class UserEndpoints
 {
-    public static RouteGroupBuilder MapUserEndpoints(this IEndpointRouteBuilder app, SessionStore sessions, AppConfig cfg, ICircleServices circle, VenueCore core, Venue.Chain.IChainGateway gateway, DevAccountStore devAccounts)
+    public static RouteGroupBuilder MapUserEndpoints(this IEndpointRouteBuilder app, SessionStore sessions, AppConfig cfg, ICircleServices circle, VenueCore core, Venue.Chain.IChainGateway gateway, Venue.Chain.ISessionProvisioner sessionProvisioner)
     {
         var g = app.MapGroup("/v1").WithTags("user");
 
         g.MapPost("/session", async (BindSessionReq req) =>
         {
             if (string.IsNullOrWhiteSpace(req.Ref)) return Results.BadRequest(new { error = "ref required" });
-            // SEAM 1: provision a SIGNABLE, gas-funded account for the email (dev mode).
-            // The backend derives and holds the key; user-signed txs (approve+deposit,
-            // postRequest, reveal, redeem) then work via the user-key resolver.
-            var address = await devAccounts.ProvisionAsync(req.Ref, CancellationToken.None);
+            // Session: provision a signable account for the email (DevAccountStore for
+            // nethereum/simulated; a Circle SCA for circle mode) so user-signed txs work.
+            var address = await sessionProvisioner.ProvisionAsync(req.Ref, CancellationToken.None);
             var token = sessions.Create(address);
             return Results.Ok(new { token, address, gasless = circle.GaslessSupported });
         });

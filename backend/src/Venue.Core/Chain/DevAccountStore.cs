@@ -13,7 +13,7 @@ namespace Venue.Chain;
 /// is funded with anvil gas at provision time. The gateway's user-key resolver consults
 /// this store AFTER the configured DemoUsers (the /session/bind bridge).
 /// </summary>
-public sealed class DevAccountStore
+public sealed class DevAccountStore : ISessionProvisioner
 {
     private readonly string _secret;
     private readonly ConcurrentDictionary<string, string> _byRef = new();

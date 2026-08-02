@@ -8,11 +8,17 @@ public sealed class AppConfig
 {
     public required ChainConfig Chain { get; init; }
     public required bool Simulate { get; init; }
+    /// <summary>Wallet provider: "circle" | "nethereum" | "simulated". Default circle when
+    /// running against a real chain (Simulate=false), simulated otherwise.</summary>
+    public required string WalletProvider { get; init; }
     public required string OperatorPrivateKey { get; init; }
     public required Dictionary<string, string> DemoUserKeys { get; init; }   // address -> private key (dev-controlled SCAs)
     public required string? CircleApiKey { get; init; }
     public required string? CircleEntitySecretCiphertext { get; init; }
+    public required string? CircleEntitySecret { get; init; }
+    public required string? CircleWalletSetId { get; init; }
     public required string CircleBaseUrl { get; init; }
+    public required string CircleWalletStorePath { get; init; }
     public required int CommitSeconds { get; init; }
     public required int RevealSeconds { get; init; }
     public required string SaltSecret { get; init; }
@@ -45,11 +51,15 @@ public sealed class AppConfig
                 Usdc: cfg["Venue:Chain:Usdc"] ?? "0x3600000000000000000000000000000000000000",
                 OperatorAddress: Domain.Addresses.Normalize(cfg["Venue:Chain:OperatorAddress"] ?? "0x0000000000000000000000000000000000000005")),
             Simulate = simulate,
+            WalletProvider = (cfg["Venue:WalletProvider"] ?? (simulate ? "simulated" : "circle")).ToLowerInvariant(),
             OperatorPrivateKey = operatorKey,
             DemoUserKeys = demoUsers,
             CircleApiKey = cfg["Venue:Circle:ApiKey"],
             CircleEntitySecretCiphertext = cfg["Venue:Circle:EntitySecretCiphertext"],
+            CircleEntitySecret = cfg["Venue:Circle:EntitySecret"],
+            CircleWalletSetId = cfg["Venue:Circle:WalletSetId"],
             CircleBaseUrl = cfg["Venue:Circle:BaseUrl"] ?? "https://api.circle.com/v1",
+            CircleWalletStorePath = cfg["Venue:CircleWalletStorePath"] ?? "data/circle-wallets.json",
             CommitSeconds = cfg.GetValue<int?>("Venue:RfmWindows:CommitSeconds") ?? 120,
             RevealSeconds = cfg.GetValue<int?>("Venue:RfmWindows:RevealSeconds") ?? 60,
             SaltSecret = cfg["Venue:SaltSecret"] ?? "",
