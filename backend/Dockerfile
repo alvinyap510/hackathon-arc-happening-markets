@@ -13,4 +13,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
 WORKDIR /app
 COPY --from=build /out .
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080
-ENTRYPOINT ["dotnet", "Venue.Api.dll"]
+# The compose stack mounts ./e2e/.runtime at /app/shared and the deploy job writes
+# backend.env there AFTER this image is built but BEFORE the container starts; source
+# and EXPORT it here (set -a) so the real Nethereum config reaches the dotnet process.
+ENTRYPOINT ["/bin/sh", "-c", "set -a; . /app/shared/backend.env; set +a; exec dotnet Venue.Api.dll"]
