@@ -66,6 +66,10 @@ public sealed record Redeemed(string Contract, ulong BlockNumber, ulong LogIndex
 public sealed record MarketReserved(string Contract, ulong BlockNumber, ulong LogIndex, string TxHash, string MarketId)
     : VenueEvent(Contract, BlockNumber, LogIndex, TxHash);
 
+/// <summary>RFM's own MarketReserved (same signature family, carries the request id).</summary>
+public sealed record RfmMarketReserved(string Contract, ulong BlockNumber, ulong LogIndex, string TxHash, string MarketId, BigInteger RequestId)
+    : VenueEvent(Contract, BlockNumber, LogIndex, TxHash);
+
 public sealed record MarketCreated(string Contract, ulong BlockNumber, ulong LogIndex, string TxHash, string MarketId, byte[] Meta)
     : VenueEvent(Contract, BlockNumber, LogIndex, TxHash);
 

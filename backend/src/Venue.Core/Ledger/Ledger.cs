@@ -119,6 +119,7 @@ public sealed class Ledger
             case RfmFill:
             case BondSlashed:
             case MarketReserved:
+            case RfmMarketReserved:
             case MarketCreated:
             case MarketResolved:
             case RequestPosted:
