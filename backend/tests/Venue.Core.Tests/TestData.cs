@@ -30,12 +30,12 @@ public static class TestData
 
     public static TradingEngine NewEngine(VaultLedger ledger, string marketId)
     {
-        var markets = new Dictionary<string, Market> { [Hash.NormalizeBytes32(marketId)] = new() { MarketId = Hash.NormalizeBytes32(marketId) } };
+        var markets = new Dictionary<string, Market> { [Hash.NormalizeBytes32(marketId)] = new() { MarketId = Hash.NormalizeBytes32(marketId), Exists = true } };
         return new TradingEngine(ledger, markets);
     }
 
     public static Market MarketFor(string marketId)
-        => new() { MarketId = Hash.NormalizeBytes32(marketId) };
+        => new() { MarketId = Hash.NormalizeBytes32(marketId), Exists = true };
 
     public static void SeedUsdc(VaultLedger ledger, string user, BigInteger amt)
         => ledger.Apply(new Deposited(Vault, 1, 0, "0xseed", user, amt));

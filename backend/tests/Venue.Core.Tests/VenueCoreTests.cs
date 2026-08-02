@@ -100,6 +100,30 @@ public class VenueCoreTests
     }
 
     [Fact]
+    public async Task ReservedButNotBornMarket_RejectsAtIntake()
+    {
+        var core = NewCore();
+        var marketId = Hash.NormalizeBytes32("0xBEEF");
+        var yesId = Assets.TokenId(marketId, Outcome.Yes);
+
+        // MarketReserved only (Exists=false) — reserved during commit-reveal, NOT yet born.
+        await core.ApplyEventsAsync(new VenueEvent[]
+        {
+            new MarketReserved(TestData.Ot, 1, 0, "0x", marketId),
+            new Deposited(TestData.Vault, 2, 0, "0x", TestData.Bob, 10_000_000),
+            new TokensDeposited(TestData.Vault, 3, 0, "0x", TestData.Alice, yesId, 10_000_000),
+        });
+
+        var order = await core.PlaceOrderAsync(new OrderRequest(TestData.Alice, marketId, Outcome.Yes, OrderSide.Sell, 100_000, 600, OrderType.Limit, "s1", null));
+        Assert.Equal(OrderStatus.Rejected, order.TerminalStatus);
+        Assert.Equal("market_not_born", order.RejectReason);
+
+        var market = await core.GetMarketAsync(marketId);
+        Assert.True(market.Reserved);
+        Assert.False(market.Exists);
+    }
+
+    [Fact]
     public async Task FailedFullFill_ReleasesReservationOfFilledOrder()
     {
         var core = await SeedMarketAsync(NewCore());

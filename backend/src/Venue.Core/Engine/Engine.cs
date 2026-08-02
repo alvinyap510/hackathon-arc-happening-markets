@@ -67,10 +67,13 @@ public sealed class Engine
 
         var (asset, amount) = Order.ReserveFor(market.MarketId, req.Outcome, req.Side, req.Size, ReservePrice(req));
 
-        // Intake gate: a market that is unknown, Resolved or Closing (resolution initiated) is
-        // closed for trading — nothing may be admitted against it.
+        // Intake gate: a market is tradable ONLY when it exists on-chain (born — Exists=true,
+        // not merely Reserved during commit-reveal), is not Resolved, and is not Closing.
+        // Unknown markets are rejected outright.
         if (!_markets.TryGetValue(market.MarketId, out var known))
             return Reject(req, market, asset, amount, "market_not_found");
+        if (!known.Exists)
+            return Reject(req, market, asset, amount, "market_not_born");
         if (known.Resolved)
             return Reject(req, market, asset, amount, "market_resolved");
         if (known.Closing)
