@@ -149,8 +149,15 @@ public sealed class SettlementBatcher
             }
             catch (Exception ex)
             {
-                outcome = new SettlementReceipt(TxStatus.Unknown, null);
-                System.Console.WriteLine($"settle: submit/await failed {ex.Message}");
+                // The RPC may have ACCEPTED the tx and lost only the response, so the tx can
+                // still mine. Locate it by batchId and reconcile through the normal timeout path —
+                // NEVER unwind on a submission exception. Only unwind if provably not submitted.
+                var located = await _gateway.FindPendingSettlementAsync(batchId, ct);
+                txHash = located;
+                outcome = located != null
+                    ? await ReconcileAsync(located, ct)
+                    : new SettlementReceipt(TxStatus.Unknown, null);
+                System.Console.WriteLine($"settle: submit raised {ex.Message}; tx located={located != null}");
             }
 
             if (outcome.Status == TxStatus.Confirmed)

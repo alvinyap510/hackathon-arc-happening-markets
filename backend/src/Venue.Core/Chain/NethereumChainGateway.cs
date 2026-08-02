@@ -109,6 +109,40 @@ public sealed class NethereumChainGateway : IChainGateway
     public async Task<BatchRevertInfo?> TryGetRevertAsync(string txHash, CancellationToken ct)
         => await RecoverRevertAsync(txHash, ct);
 
+    public async Task<string?> FindPendingSettlementAsync(string batchId, CancellationToken ct)
+    {
+        // The batchId is the first calldata word after the settleBatch selector
+        // (settleBatch(bytes32, tuple[])). Scan the pending pool then recent blocks for an
+        // operator->exchange tx carrying it.
+        var expected = Infrastructure.Hash.NormalizeBytes32(batchId)[2..];
+        Func<Transaction, bool> isOurs = tx =>
+            string.Equals(tx.From, _cfg.OperatorAddress, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(tx.To, _cfg.NormalizedExchange, StringComparison.OrdinalIgnoreCase)
+            && tx.Input is { Length: >= 74 }
+            && tx.Input.Substring(10, 64).Equals(expected, StringComparison.OrdinalIgnoreCase);
+
+        try
+        {
+            var pending = await _operatorWeb3.Eth.Blocks.GetBlockWithTransactionsByNumber.SendRequestAsync(BlockParameter.CreatePending());
+            var hit = pending?.Transactions?.FirstOrDefault(t => isOurs(t));
+            if (hit != null) return hit.TransactionHash;
+
+            var latest = await LatestBlockAsync(ct);
+            for (var b = latest; b > latest - 25 && b > 0; b--)
+            {
+                var block = await _operatorWeb3.Eth.Blocks.GetBlockWithTransactionsByNumber.SendRequestAsync(new HexBigInteger(b));
+                hit = block?.Transactions?.FirstOrDefault(t => isOurs(t));
+                if (hit != null) return hit.TransactionHash;
+            }
+        }
+        catch
+        {
+            // Node hiccup: report "not found" so the batcher does not unwind based on a guess;
+            // it will re-run the reconciliation on the next attempt cycle.
+        }
+        return null;
+    }
+
     public async Task<SettlementReceipt> AwaitSettlementAsync(string txHash, CancellationToken ct)
     {
         var deadline = DateTimeOffset.UtcNow.AddSeconds(30);

@@ -183,6 +183,34 @@ public class SettlementTests
     // ------------------------------------------------------------ timeout reconciliation
 
     [Fact]
+    public async Task Batcher_SubmitThrowsButTxLaterMines_NoDoubleExecute()
+    {
+        var gateway = new ScriptedGateway();
+        gateway.SubmitThrows = true; // RPC accepted the tx, only the response was lost
+        for (var i = 0; i < 3; i++) gateway.StatusSequence.Enqueue(TxStatus.Pending);
+        gateway.StatusSequence.Enqueue(TxStatus.Confirmed);
+        gateway.PendingTx = true;
+
+        var coordinator = new RecordingCoordinator();
+        var batcher = new SettlementBatcher(gateway, coordinator, TestData.Operator, reconcileIntervalMs: 10);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var run = Task.Run(() => batcher.RunAsync(cts.Token));
+
+        for (var i = 0; i < 2; i++) batcher.Enqueue(Match(i));
+
+        await WaitUntilAsync(() => coordinator.Confirmed.Count == 1, TimeSpan.FromSeconds(8));
+        cts.Cancel();
+        try { await run; } catch (OperationCanceledException) { /* expected */ }
+
+        // The submission exception did NOT unwind: the accepted tx was located by batchId and
+        // confirmed when it mined — reservation never released prematurely, no double execution.
+        Assert.Single(coordinator.Confirmed);
+        Assert.Empty(coordinator.CancelledAll);
+        Assert.Empty(coordinator.Repaired);
+        Assert.Equal(1, gateway.SettlementSubmits);
+    }
+
+    [Fact]
     public async Task Batcher_StillPendingPastOldExpiry_LaterMines_NoDoubleExecute()
     {
         var gateway = new ScriptedGateway();
@@ -370,8 +398,18 @@ public class SettlementTests
         public Task<string> SubmitSettlementAsync(string batchId, IReadOnlyList<SettlementTrade> trades, CancellationToken ct)
         {
             SettlementSubmits++;
-            return Task.FromResult("0x" + SettlementSubmits.ToString("x"));
+            var hash = "0x" + SettlementSubmits.ToString("x");
+            BatchTx[Hash.NormalizeBytes32(batchId)] = hash;
+            if (SubmitThrows)
+                throw new InvalidOperationException("rpc response lost"); // tx WAS recorded, response not returned
+            return Task.FromResult(hash);
         }
+
+        public Task<string?> FindPendingSettlementAsync(string batchId, CancellationToken ct)
+            => Task.FromResult(BatchTx.TryGetValue(Hash.NormalizeBytes32(batchId), out var h) ? h : null);
+
+        public bool SubmitThrows { get; set; }
+        public Dictionary<string, string> BatchTx { get; } = new();
 
         public Task<SettlementReceipt> AwaitSettlementAsync(string txHash, CancellationToken ct)
             => Task.FromResult(Outcomes.Count > 0 ? Outcomes.Dequeue() : new SettlementReceipt(TxStatus.Confirmed, null));

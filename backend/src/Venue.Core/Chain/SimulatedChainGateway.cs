@@ -20,6 +20,7 @@ public sealed class SimulatedChainGateway : IChainGateway
     private readonly List<(ulong Block, ulong LogIndex, VenueEvent Event)> _logs = new();
     private readonly Dictionary<string, List<VenueEvent>> _txEvents = new();
     private readonly Dictionary<string, SettlementReceipt> _settleOutcomes = new();
+    private readonly Dictionary<string, string> _batchTx = new(); // batchId -> txHash
     private ulong _latestBlock;
     private ulong _txCounter;
 
@@ -54,7 +55,17 @@ public sealed class SimulatedChainGateway : IChainGateway
     }
 
     public async Task<string> SubmitSettlementAsync(string batchId, IReadOnlyList<SettlementTrade> trades, CancellationToken ct)
-        => RecordSettlement(r => _contract.SettleBatch(batchId, trades, r));
+    {
+        var txHash = RecordSettlement(r => _contract.SettleBatch(batchId, trades, r));
+        lock (_sync) _batchTx[Infrastructure.Hash.NormalizeBytes32(batchId)] = txHash;
+        return txHash;
+    }
+
+    public async Task<string?> FindPendingSettlementAsync(string batchId, CancellationToken ct)
+    {
+        lock (_sync)
+            return _batchTx.TryGetValue(Infrastructure.Hash.NormalizeBytes32(batchId), out var tx) ? tx : null;
+    }
 
     public async Task<SettlementReceipt> AwaitSettlementAsync(string txHash, CancellationToken ct)
     {

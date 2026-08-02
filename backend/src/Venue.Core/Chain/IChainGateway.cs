@@ -60,6 +60,14 @@ public interface IChainGateway
     /// <summary>Best-effort revert attribution for a reverted tx (may be null).</summary>
     Task<BatchRevertInfo?> TryGetRevertAsync(string txHash, CancellationToken ct);
 
+    /// <summary>
+    /// Locate a settlement tx for a batchId when the submission call threw before returning a
+    /// hash (the RPC may have ACCEPTED the tx and only the response was lost). Returns the tx
+    /// hash if a pending or recently-mined operator→exchange settleBatch tx with this batchId
+    /// exists, else null (provably not submitted).
+    /// </summary>
+    Task<string?> FindPendingSettlementAsync(string batchId, CancellationToken ct);
+
     Task<string> SubmitFinalizeAsync(BigInteger requestId, CancellationToken ct);
     Task<string> SubmitResolveAsync(string marketId, Outcome outcome, CancellationToken ct);
 
