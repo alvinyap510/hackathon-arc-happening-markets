@@ -163,6 +163,57 @@ public class EngineTests
         Assert.Equal(new BigInteger(100), buy.Order.Remaining);
     }
 
+    // ------------------------------------------------- NO-side market orders
+
+    [Fact]
+    public void Matching_BuyNoMarketOrder_SweepsRestingSellNo()
+    {
+        var (engine, market) = Setup(100_000);
+        var sellNo = engine.Place(Req(TestData.Alice, Outcome.No, OrderSide.Sell, 600, 100), market);
+        Assert.Equal(OrderStatus.Resting, sellNo.TerminalStatus); // stored BUY @ 400
+
+        var buyNo = engine.Place(Req(TestData.Bob, Outcome.No, OrderSide.Buy, 0, 100, OrderType.Market), market);
+        Assert.Equal(OrderStatus.Filled, buyNo.TerminalStatus); // market sweeps the resting sell
+        var fill = Assert.Single(buyNo.Fills);
+        Assert.Equal(TradeClass.Transfer, fill.Trade.Class);
+        Assert.Equal(Outcome.No, fill.Trade.Outcome);
+        Assert.Equal(600, fill.Trade.OutcomeTick); // NO-price tick
+    }
+
+    [Fact]
+    public void Matching_SellNoMarketOrder_SweepsRestingBuyNo()
+    {
+        var (engine, market) = Setup(100_000);
+        var buyNo = engine.Place(Req(TestData.Alice, Outcome.No, OrderSide.Buy, 600, 100), market);
+        Assert.Equal(OrderStatus.Resting, buyNo.TerminalStatus); // stored SELL @ 400
+
+        var sellNo = engine.Place(Req(TestData.Bob, Outcome.No, OrderSide.Sell, 0, 100, OrderType.Market), market);
+        Assert.Equal(OrderStatus.Filled, sellNo.TerminalStatus);
+        var fill = Assert.Single(sellNo.Fills);
+        Assert.Equal(TradeClass.Transfer, fill.Trade.Class);
+        Assert.Equal(600, fill.Trade.OutcomeTick);
+    }
+
+    [Fact]
+    public void Reservations_MarketBuy_ReservesFullNotional()
+    {
+        // A market BUY reserves its WORST-CASE spend (the full notional), never zero: a buyer
+        // who cannot cover the full notional is rejected even before the book is consulted.
+        var ledger = TestData.NewLedger();
+        TestData.SeedUsdc(ledger, TestData.Bob, 99); // one micro short of 100 shares at $1.00
+        var engine = TestData.NewEngine(ledger, MarketId);
+        var market = TestData.MarketFor(MarketId);
+
+        var rejected = engine.Place(Req(TestData.Bob, Outcome.Yes, OrderSide.Buy, 0, 100, OrderType.Market), market);
+        Assert.Equal(OrderStatus.Rejected, rejected.TerminalStatus);
+        Assert.Equal("insufficient_available", rejected.RejectReason);
+
+        TestData.SeedUsdc(ledger, TestData.Bob, 1); // now exactly 100
+        var accepted = engine.Place(Req(TestData.Bob, Outcome.Yes, OrderSide.Buy, 0, 100, OrderType.Market), market);
+        Assert.Equal(OrderStatus.Partial, accepted.TerminalStatus); // no liquidity: killed, reservation released
+        Assert.Equal(new BigInteger(100), ledger.Available(TestData.Bob, Assets.Usdc));
+    }
+
     // ----------------------------------------------------------- reservations
 
     [Fact]

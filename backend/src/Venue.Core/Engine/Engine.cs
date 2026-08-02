@@ -136,8 +136,11 @@ public sealed class Engine
 
     private Order BuildOrder(OrderRequest req, Market market, string asset, BigInteger amount)
     {
+        // Market orders take the aggressive extreme in the CANONICAL book side: a BUY NO order
+        // rests as an ASK (SELL YES), so its market extreme is the sell extreme (0), not 1000.
+        var bookSide = Order.StoredSideFor(req.Side, req.Outcome);
         var bookPrice = req.Type == OrderType.Market
-            ? (req.Side == OrderSide.Buy ? Order.MarketBuyBookPrice : Order.MarketSellBookPrice)
+            ? (bookSide == BookSide.Bid ? Order.MarketBuyBookPrice : Order.MarketSellBookPrice)
             : Order.StoredPriceFor(req.Outcome, req.Price);
         var orderId = !string.IsNullOrEmpty(req.ClientOrderId) ? "o_" + req.ClientOrderId : "o_" + Guid.NewGuid().ToString("N");
         return new Order
@@ -152,7 +155,7 @@ public sealed class Engine
             Price = req.Price,
             Type = req.Type,
             Status = OrderStatus.New,
-            BookSide = Order.StoredSideFor(req.Side, req.Outcome),
+            BookSide = bookSide,
             BookPrice = bookPrice,
             ReservedAsset = asset,
             ReservedAmount = amount,
