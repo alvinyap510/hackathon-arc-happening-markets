@@ -153,6 +153,32 @@ public class SettlementTests
         Assert.Equal(1, gateway.SettlementSubmits);
     }
 
+    [Fact]
+    public async Task Batcher_ExhaustedRepairAttempts_UnwindsRemainder()
+    {
+        var gateway = new ScriptedGateway();
+        // Every attributed repair attempt reverts at index 0; after MaxRepairAttempts the loop
+        // must unwind what is left rather than silently stranding fills.
+        for (var i = 0; i < 10; i++)
+            gateway.Outcomes.Enqueue(new SettlementReceipt(TxStatus.Reverted, new BatchRevertInfo(0, "0x" + new string('c', 64), "SettleBatchFailed", "")));
+
+        var coordinator = new RecordingCoordinator();
+        var batcher = new SettlementBatcher(gateway, coordinator, TestData.Operator);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var run = Task.Run(() => batcher.RunAsync(cts.Token));
+
+        for (var i = 0; i < 8; i++) batcher.Enqueue(Match(i));
+
+        await WaitUntilAsync(() => coordinator.CancelledAll.Count == 1, TimeSpan.FromSeconds(8));
+        cts.Cancel();
+        try { await run; } catch (OperationCanceledException) { /* expected */ }
+
+        Assert.Equal(4, coordinator.Repaired.Count);               // 4 attributed repairs
+        Assert.Equal(4, coordinator.CancelledAll[0].Matches.Count); // the remaining 4 unwound
+        Assert.Equal("repair_attempts_exhausted", coordinator.CancelledAll[0].Reason);
+        Assert.Empty(coordinator.Confirmed);
+    }
+
     // ------------------------------------------------------------ timeout reconciliation
 
     [Fact]
