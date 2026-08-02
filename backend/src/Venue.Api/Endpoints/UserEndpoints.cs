@@ -18,6 +18,19 @@ public static class UserEndpoints
             return Results.Ok(new { token, address = session.Address, gasless = circle.GaslessSupported });
         });
 
+        // Real-chain demo sessions: bind a session directly to an address the host holds a
+        // dev-controlled key for (Venue:DemoUsers). The Circle mock derives non-signable
+        // addresses from refs, which cannot drive real user ops; this path is the explicit
+        // bridge for throwaway EOA keys on a local chain / dev-run.
+        g.MapPost("/session/bind", async (BindAddressReq req) =>
+        {
+            if (string.IsNullOrWhiteSpace(req.Address)) return Results.BadRequest(new { error = "address required" });
+            var addr = Venue.Domain.Addresses.Normalize(req.Address);
+            if (!cfg.DemoUserKeys.ContainsKey(addr)) return Results.Forbid();
+            var token = sessions.Create(addr);
+            return Results.Ok(new { token, address = addr, gasless = circle.GaslessSupported });
+        });
+
         g.MapGet("/wallet", (HttpRequest req) =>
         {
             var user = UserOf(req, sessions, cfg);
@@ -78,6 +91,7 @@ public static class UserEndpoints
     }
 
     public sealed record BindSessionReq(string? Ref);
+    public sealed record BindAddressReq(string? Address);
     public sealed record BridgeReq(string? Amount);
     public sealed record AmountReq(string? Amount);
     public sealed record TokenAmountReq(string? TokenId, string? Amount);
