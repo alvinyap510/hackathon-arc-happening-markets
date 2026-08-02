@@ -48,7 +48,9 @@ public sealed record BookSnapshot(
     IReadOnlyList<BookLevel> NoBids,
     IReadOnlyList<BookLevel> NoAsks);
 
-public sealed record PositionBalance(string TokenId, BigInteger Amount);
+/// <summary>A position on one market/outcome. Carries the marketId + outcome alongside the
+/// keccak tokenId (which the frontend cannot reverse) so clients map directly (SEAM 3).</summary>
+public sealed record PositionBalance(string TokenId, string MarketId, Outcome Outcome, BigInteger Amount);
 
 public sealed record UserBalances(
     string User,

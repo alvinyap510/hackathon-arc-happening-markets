@@ -185,7 +185,14 @@ public sealed class WsHub : IEventSink
     private async Task<object> BuildBalancesAsync(string user)
     {
         var b = await _core.GetBalancesAsync(user);
-        return new { address = b.User, chainFree = b.ChainFree.ToString(), reserved = b.Reserved.ToString(), available = b.Available.ToString(), positions = b.Positions.Select(p => new { tokenId = p.TokenId, amount = p.Amount.ToString() }).ToList() };
+        return new
+        {
+            address = b.User,
+            chainFree = b.ChainFree.ToString(),
+            reserved = b.Reserved.ToString(),
+            available = b.Available.ToString(),
+            positions = b.Positions.Select(p => new { tokenId = p.TokenId, marketId = p.MarketId, outcome = p.Outcome.ToString().ToLowerInvariant(), amount = p.Amount.ToString() }).ToList(),
+        };
     }
 
     private async Task<object> BuildTradesAsync(string marketId)
