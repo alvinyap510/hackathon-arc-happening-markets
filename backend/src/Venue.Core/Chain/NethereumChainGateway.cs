@@ -43,6 +43,12 @@ public sealed class NethereumChainGateway : IChainGateway
         return (ulong)block.Value;
     }
 
+    public async Task<string> GetBlockHashAsync(ulong blockNumber, CancellationToken ct)
+    {
+        var block = await _operatorWeb3.Eth.Blocks.GetBlockWithTransactionsHashesByNumber.SendRequestAsync(new HexBigInteger(blockNumber));
+        return block?.BlockHash ?? "";
+    }
+
     public async Task<IReadOnlyList<VenueEvent>> FetchLogsAsync(ulong fromBlock, ulong toBlock, CancellationToken ct)
     {
         if (toBlock < fromBlock) return Array.Empty<VenueEvent>();

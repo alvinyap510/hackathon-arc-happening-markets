@@ -48,6 +48,7 @@ public interface IChainGateway
     Task<ulong> LatestBlockAsync(CancellationToken ct);
     Task<IReadOnlyList<VenueEvent>> FetchLogsAsync(ulong fromBlock, ulong toBlock, CancellationToken ct);
     Task<IReadOnlyList<VenueEvent>> DecodeReceiptEventsAsync(string txHash, CancellationToken ct);
+    Task<string> GetBlockHashAsync(ulong blockNumber, CancellationToken ct);
 
     Task<string> SubmitSettlementAsync(string batchId, IReadOnlyList<SettlementTrade> trades, CancellationToken ct);
     Task<SettlementReceipt> AwaitSettlementAsync(string txHash, CancellationToken ct);

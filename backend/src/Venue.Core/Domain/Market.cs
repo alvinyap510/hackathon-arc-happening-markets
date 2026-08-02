@@ -43,3 +43,12 @@ public sealed record BookSnapshot(
     IReadOnlyList<BookLevel> YesAsks,
     IReadOnlyList<BookLevel> NoBids,
     IReadOnlyList<BookLevel> NoAsks);
+
+public sealed record PositionBalance(string TokenId, BigInteger Amount);
+
+public sealed record UserBalances(
+    string User,
+    BigInteger ChainFree,
+    BigInteger Reserved,
+    BigInteger Available,
+    IReadOnlyList<PositionBalance> Positions);

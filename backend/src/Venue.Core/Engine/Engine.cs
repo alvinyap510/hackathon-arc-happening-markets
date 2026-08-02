@@ -39,6 +39,18 @@ public sealed class Engine
 
     public IReadOnlyList<Order> RestingOrders() => _orders.Values.Where(o => o.Status == OrderStatus.Resting).ToList();
 
+    public IReadOnlyList<Order> OrdersFor(string user, OrderStatus? status = null)
+        => _orders.Values.Where(o => o.User == user && (status == null || o.Status == status)).OrderByDescending(o => o.CreatedAtUnixSec).ToList();
+
+    /// <summary>Restart: discard all volatile orders, books and client-id map (reservations are
+    /// cleared separately in the ledger). Balances are rebuilt from events on replay.</summary>
+    public void ResetForRestart()
+    {
+        _books.Clear();
+        _orders.Clear();
+        _byClientId.Clear();
+    }
+
     private OrderBook Book(string marketId)
     {
         if (!_books.TryGetValue(marketId, out var b)) { b = new OrderBook(); _books[marketId] = b; }
@@ -206,9 +218,12 @@ public sealed class Engine
     /// remaining commitment now exceeds available. Pure UX courtesy; safety is on-chain.
     /// </summary>
     public IReadOnlyList<Order> InsolvencySweep()
+        => InsolvencySweep(user: null);
+
+    public IReadOnlyList<Order> InsolvencySweep(string? user)
     {
         var doomed = new List<Order>();
-        foreach (var order in RestingOrders())
+        foreach (var order in RestingOrders().Where(o => user == null || o.User == user))
         {
             var commitment = ProportionalReservation(order, order.Remaining);
             var available = _ledger.Available(order.User, order.ReservedAsset);

@@ -75,6 +75,9 @@ public sealed class Ledger
         foreach (var e in events) Apply(e);
     }
 
+    /// <summary>Drop all off-chain reservations (restart); balances remain exact.</summary>
+    public void ClearReservations() => _reserved.Clear();
+
     public void Apply(VenueEvent e)
     {
         switch (e)

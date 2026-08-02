@@ -1,0 +1,19 @@
+using Venue.Engine;
+
+namespace Venue.Settlement;
+
+/// <summary>
+/// Callback interface between the batcher and the venue core. All confirm/repair/cancel
+/// mutations run under the core gate; the batcher itself performs the chain I/O outside it.
+/// </summary>
+public interface ISettlementCoordinator
+{
+    /// <summary>A whole batch settled: release fill reservations, record trade history, broadcast.</summary>
+    Task ConfirmBatchAsync(string batchId, IReadOnlyList<MatchedTrade> matches);
+
+    /// <summary>A batch reverted at <paramref name="revert"/>: cancel the failing trade's orders, resubmit the rest.</summary>
+    Task RepairBatchAsync(string batchId, IReadOnlyList<MatchedTrade> matches, BatchRevertInfo revert);
+
+    /// <summary>Attribution unclear or repair attempts exhausted: cancel every order in the batch, let the book re-cross.</summary>
+    Task CancelAllOrdersAsync(IReadOnlyList<MatchedTrade> matches, string reason);
+}
