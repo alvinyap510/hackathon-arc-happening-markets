@@ -66,28 +66,28 @@ public class IntegrationAdditionsTests
     // ------------------------------------------------------------- G4/G6 sim gateway
 
     [Fact]
-    public void SimulatedGateway_FaucetMintsWalletBalance()
+    public async Task SimulatedGateway_FaucetMintsWalletBalance()
     {
         var cfg = TestData.Cfg;
         var gw = new SimulatedChainGateway(cfg);
-        gw.SubmitMintUsdcAsync(TestData.Alice, 10_000_000, CancellationToken.None).GetAwaiter().GetResult();
-        Assert.Equal(new BigInteger(10_000_000), gw.GetUsdcWalletBalanceAsync(TestData.Alice, CancellationToken.None).GetAwaiter().GetResult());
+        await gw.SubmitMintUsdcAsync(TestData.Alice, 10_000_000, CancellationToken.None);
+        Assert.Equal(new BigInteger(10_000_000), await gw.GetUsdcWalletBalanceAsync(TestData.Alice, CancellationToken.None));
     }
 
     [Fact]
-    public void SimulatedGateway_RequestCount_TracksPostedRequests()
+    public async Task SimulatedGateway_RequestCount_TracksPostedRequests()
     {
         var cfg = TestData.Cfg;
         var gw = new SimulatedChainGateway(cfg);
-        Assert.Equal(BigInteger.Zero, gw.GetRequestCountAsync(CancellationToken.None).GetAwaiter().GetResult());
+        Assert.Equal(BigInteger.Zero, await gw.GetRequestCountAsync(CancellationToken.None));
 
         // The requester must have vault free balance to cover escrow + bond at post.
-        gw.SubmitDepositAsync(TestData.Alice, 5_000_000_000, CancellationToken.None).GetAwaiter().GetResult();
+        await gw.SubmitDepositAsync(TestData.Alice, 5_000_000_000, CancellationToken.None);
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        gw.SubmitPostRequestAsync(TestData.Alice, MarketHash, RfmSide.Yes, 1000_000_000, 600, 200_000_000,
-            now + 100, now + 200, CancellationToken.None).GetAwaiter().GetResult();
+        await gw.SubmitPostRequestAsync(TestData.Alice, MarketHash, RfmSide.Yes, 1000_000_000, 600, 200_000_000,
+            now + 100, now + 200, CancellationToken.None);
 
-        Assert.Equal(BigInteger.One, gw.GetRequestCountAsync(CancellationToken.None).GetAwaiter().GetResult());
+        Assert.Equal(BigInteger.One, await gw.GetRequestCountAsync(CancellationToken.None));
     }
 
     [Fact]
