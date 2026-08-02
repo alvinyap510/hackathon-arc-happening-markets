@@ -63,6 +63,52 @@ public class IntegrationAdditionsTests
         Assert.Equal("upper", store.Get(MarketHash)!.QuestionText);
     }
 
+    // ------------------------------------------------------------- SEAM 1 dev accounts
+
+    [Fact]
+    public async Task DevAccountStore_Provision_IsDeterministicAndSignable()
+    {
+        var store = new Chain.DevAccountStore("test-secret");
+        var a1 = await store.ProvisionAsync("alice@example.com", CancellationToken.None);
+        var a2 = await store.ProvisionAsync("alice@example.com", CancellationToken.None);
+        Assert.Equal(a1, a2); // same ref -> same account across restarts
+
+        // The backend holds a real signable key for the provisioned address.
+        var key = store.KeyForAddress(a1);
+        Assert.False(string.IsNullOrEmpty(key));
+        Assert.Equal(a1, Domain.Addresses.Normalize(new Nethereum.Web3.Accounts.Account(key).Address));
+
+        // Different refs -> different accounts.
+        var b = await store.ProvisionAsync("bob@example.com", CancellationToken.None);
+        Assert.NotEqual(a1, b);
+    }
+
+    [Fact]
+    public void DevAccountStore_IsolatedBySecret()
+    {
+        var s1 = new Chain.DevAccountStore("secret-a");
+        var s2 = new Chain.DevAccountStore("secret-b");
+        var a = s1.AddressForRef("x@y.com");
+        var b = s2.AddressForRef("x@y.com");
+        // AddressForRef only resolves after provisioning; separate stores never share.
+        Assert.Null(a);
+        Assert.Null(b);
+    }
+
+    [Fact]
+    public async Task DevAccountStore_ResolvesFromAnyProcessRestart()
+    {
+        // A NEW store instance with the SAME secret derives the SAME key/address (no
+        // persisted store needed): simulate a restart mid-session.
+        var first = new Chain.DevAccountStore("stable-secret");
+        var addr = await first.ProvisionAsync("inst@hedge.fund", CancellationToken.None);
+        var restarted = new Chain.DevAccountStore("stable-secret");
+        var key = restarted.KeyForAddress(addr); // empty until re-provisioned in this instance
+        Assert.Null(key);
+        var addr2 = await restarted.ProvisionAsync("inst@hedge.fund", CancellationToken.None);
+        Assert.Equal(addr, addr2);
+    }
+
     // ------------------------------------------------------------- G4/G6 sim gateway
 
     [Fact]

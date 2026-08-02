@@ -120,6 +120,9 @@ public class RfmCoordinatorTests
         public Task<BigInteger> GetRequestCountAsync(CancellationToken ct) => throw new NotImplementedException();
         public Task<string> SubmitMintUsdcAsync(string user, BigInteger amt, CancellationToken ct) => throw new NotImplementedException();
         public Task<BigInteger> GetUsdcWalletBalanceAsync(string user, CancellationToken ct) => throw new NotImplementedException();
+
+        public Task FundGasAsync(string address, CancellationToken ct) => Task.CompletedTask;
+        public Task SubmitCreateMarketAsync(string marketId, byte[] meta, CancellationToken ct) => throw new NotImplementedException();
         public Task<string> SubmitPostRequestAsync(string user, string market, RfmSide side, BigInteger quantity, BigInteger maxPriceTick, BigInteger minMatch, BigInteger commitDeadline, BigInteger revealDeadline, CancellationToken ct) => throw new NotImplementedException();
         public Task<string> SubmitCommitQuoteAsync(string user, BigInteger requestId, string commitHash, CancellationToken ct) => throw new NotImplementedException();
         public Task<string> SubmitRevealQuoteAsync(string user, BigInteger requestId, BigInteger priceTick, BigInteger size, BigInteger salt, CancellationToken ct) => throw new NotImplementedException();
