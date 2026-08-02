@@ -204,6 +204,41 @@ contract CTFExchangeLiteTest is Test {
 
     // --------------------------------------------------- atomicity + replay
 
+    function test_settleBatch_withdrawalRaceWholeBatchReverts() public {
+        // The backend admitted and batched a BUY for alice, but alice withdrew her free
+        // USDC before the batch landed. The batch can no longer cover -> the WHOLE batch
+        // must revert, consuming nothing and moving nothing (not even the valid trade).
+        _deposit(alice, 100e6);
+        _deposit(bob, 100e6);
+        _deposit(carol, 100e6);
+        _createMarket();
+
+        // Alice races the settlement: withdraw 60e6, free now 40e6.
+        vm.prank(alice);
+        vault.withdraw(60e6);
+
+        CTFExchangeLite.Trade[] memory trades = new CTFExchangeLite.Trade[](2);
+        // trade0 is valid (carol buys YES 50e6 at tick 400 -> 20e6).
+        trades[0] = _trade(keccak256("t1"), CTFExchangeLite.TradeClass.MINT, IOutcomeTokens.Outcome.YES, carol, bob, 400, 50e6);
+        // trade1 cannot cover (alice buys YES 100e6 at tick 500 -> 50e6 > free 40e6).
+        trades[1] = _trade(keccak256("t2"), CTFExchangeLite.TradeClass.MINT, IOutcomeTokens.Outcome.YES, alice, bob, 500, 100e6);
+
+        vm.prank(operator);
+        vm.expectRevert(abi.encodeWithSelector(CTFExchangeLite.SettleBatchFailed.selector, 1, keccak256("t2")));
+        exch.settleBatch(keccak256("b1"), trades);
+
+        // Whole batch rolled back: no ids consumed, no partial movement.
+        assertFalse(exch.usedTradeIds(keccak256("t1")));
+        assertFalse(exch.usedTradeIds(keccak256("t2")));
+        assertFalse(exch.usedBatchIds(keccak256("b1")));
+        assertEq(vault.usdcBal(carol), 100e6);
+        assertEq(vault.usdcBal(bob), 100e6);
+        assertEq(vault.usdcBal(alice), 40e6);
+        assertEq(vault.tokenBal(carol, yesId), 0);
+        assertEq(vault.tokenBal(bob, noId), 0);
+        assertEq(usdc.balanceOf(address(ot)), 0);
+    }
+
     function test_settleBatch_atomicRollback() public {
         _deposit(alice, 100e6);
         _deposit(bob, 100e6);
