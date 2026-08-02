@@ -42,6 +42,12 @@ public static class Program
     const string Trader2 = "0x976EA74026E726554dB657fA54763abd0C3a0aa9";
     const string Trader3 = "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955";
 
+    // Dedicated collateral funder (anvil account #9): mints MockUSDC and funds gas.
+    // Deliberately NOT the backend's operator key (0xf39F...) and NOT a venue user, so
+    // the driver's nonces can never collide with the backend's operator or user txs.
+    const string Funder = "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720";
+    const string FunderKey = "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6";
+
     // 6-dec amounts.
     const string Mint10K = "10000000000";         // 10,000 USDC per account
     const string Deposit5K = "5000000000";        // 5,000 USDC deposited per account
@@ -75,19 +81,32 @@ public static class Program
         Pass("sessions bound for " + tokens.Count + " users");
 
         Step("3. fund ETH gas + mint MockUSDC collateral to throwaway accounts");
+        var funderWeb3 = new Web3(new Account(FunderKey), Rpc);
+        await SetBalance(operatorWeb3, Funder, 1);
         foreach (var u in AllUsers)
         {
-            await operatorWeb3.Client.SendRequestAsync(new RpcRequest(Guid.NewGuid().ToString(), "anvil_setBalance",
-                new object[] { u, "0x" + BigInteger.Pow(10, 18).ToString("x") })); // 1 ETH gas
-            await Send(operatorWeb3, addresses.Usdc, new MintFunction { To = u, Amt = BigInteger.Parse(Mint10K) });
+            await SetBalance(operatorWeb3, u, 1); // 1 ETH gas per user (approves/deposits are user-signed)
+        }
+        // Mint strictly sequentially from the DEDICATED funder account (each receipt awaited:
+        // sequential nonces, no collision with the backend's operator or user txs).
+        foreach (var u in AllUsers)
+        {
+            await Send(funderWeb3, addresses.Usdc, new MintFunction { To = u, Amt = BigInteger.Parse(Mint10K) });
         }
         Pass("gas funded + " + Mint10K + " micro USDC (10K) collateral minted per account");
+
+        Step("3b. verify mint landed on-chain (not a silent revert)");
+        var supply = await chain.TotalSupply();
+        Require(supply >= BigInteger.Parse(Mint10K) * AllUsers.Count, "MockUSDC totalSupply reflects all mints, got " + supply);
+        Pass("MockUSDC totalSupply on-chain = " + supply);
 
         Step("4. approve Vault + deposit via the backend API");
         foreach (var u in AllUsers)
         {
             var userWeb3 = new Web3(new Account(Keys[u]), Rpc);
             await Send(userWeb3, addresses.Usdc, new ApproveFunction { Spender = addresses.Vault, Amount = BigInteger.Pow(10, 60) });
+            var allowance = await chain.Allowance(u, addresses.Vault);
+            Require(allowance > 0, "approve landed on-chain (allowance=" + allowance + ") for " + u);
             var deposit = await api.PostAsync(tokens[u], "/v1/vault/deposit", new { amount = Deposit5K });
             Require(deposit.TxHash != null, "deposit tx hash for " + u);
         }
@@ -220,10 +239,70 @@ public static class Program
         if (!cond) throw new DriverAssertion("assertion failed: " + what);
     }
 
+    static async Task SetBalance(Web3 web3, string address, int eth)
+    {
+        await web3.Client.SendRequestAsync(new RpcRequest(Guid.NewGuid().ToString(), "anvil_setBalance",
+            new object[] { address, "0x" + (BigInteger.Pow(10, 18) * eth).ToString("x") }));
+    }
+
     static async Task Send<T>(Web3 web3, string to, T msg) where T : FunctionMessage, new()
     {
         var receipt = await web3.Eth.GetContractHandler(to).SendRequestAndWaitForReceiptAsync(msg);
-        if (receipt.Status!.Value != 1) throw new DriverAssertion("tx reverted to " + to);
+        if (receipt == null)
+            throw new DriverAssertion("tx to " + to + " produced no receipt");
+        if (receipt.Status!.Value != 1)
+        {
+            var reason = await TryRevertReasonAsync(web3, receipt.TransactionHash);
+            throw new DriverAssertion(
+                $"tx REVERTED to {to} tx={receipt.TransactionHash} status={receipt.Status.Value} reason={reason ?? "unknown"}");
+        }
+    }
+
+    /// <summary>Replay the reverted tx as eth_call to recover the revert string (loud failures).</summary>
+    static async Task<string?> TryRevertReasonAsync(Web3 web3, string txHash)
+    {
+        try
+        {
+            var tx = await web3.Eth.Transactions.GetTransactionByHash.SendRequestAsync(txHash);
+            if (tx == null) return null;
+            var call = new Nethereum.RPC.Eth.DTOs.CallInput(tx.Input, tx.To)
+            {
+                From = tx.From,
+                Value = tx.Value,
+            };
+            var block = new Nethereum.RPC.Eth.DTOs.BlockParameter(tx.BlockNumber);
+            try
+            {
+                var result = await web3.Eth.Transactions.Call.SendRequestAsync(call, block);
+                return "eth_call returned " + result;
+            }
+            catch (Nethereum.JsonRpc.Client.RpcResponseException ex)
+            {
+                var data = ex.RpcError?.GetDataAsString();
+                return DecodeRevertString(data);
+            }
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    static string? DecodeRevertString(string? data)
+    {
+        if (string.IsNullOrEmpty(data) || data.Length < 10) return null;
+        var hex = data.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? data[2..] : data;
+        if (!hex.StartsWith("08c379a0", StringComparison.OrdinalIgnoreCase)) return null; // Error(string)
+        try
+        {
+            var len = Convert.ToInt32(hex.Substring(64 + 64, 64), 16);
+            var raw = hex.Substring(64 + 128, len * 2);
+            return System.Text.Encoding.UTF8.GetString(Convert.FromHexString(raw));
+        }
+        catch
+        {
+            return data;
+        }
     }
 
     static async Task WaitUntil(TimeSpan timeout, Func<Task<bool>> cond, string what)
@@ -474,17 +553,22 @@ public sealed class ChainQueries(Web3 web3, Program.Addresses addresses)
     const string Operator = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 
     // usdcBal(address) / lockedBal(address) / balanceOf(address) / tokenBal(address,uint256) / tokenId(bytes32,uint8)
+    // + MockUSDC: totalSupply() / allowance(address,address)
     const string UsdcBalSel = "0x98948efa";
     const string LockedBalSel = "0x0f6bc212";
     const string BalanceOfSel = "0x70a08231";
     const string TokenBalSel = "0xdeb109e8";
     const string TokenIdSel = "0x4c5fef50";
+    const string TotalSupplySel = "0x18160ddd";
+    const string AllowanceSel = "0xdd62ed3e";
 
     public Task<BigInteger> UsdcBalance(string addr) => Call(addresses.Usdc, BalanceOfSel + A32(addr));
     public Task<BigInteger> UsdcBal(string user) => Call(addresses.Vault, UsdcBalSel + A32(user));
     public Task<BigInteger> LockedBal(string user) => Call(addresses.Vault, LockedBalSel + A32(user));
     public Task<BigInteger> TokenBal(string user, BigInteger id) => Call(addresses.Vault, TokenBalSel + A32(user) + U256(id));
     public Task<BigInteger> TokenId(string marketId, byte outcome) => Call(addresses.OutcomeTokens, TokenIdSel + H32(marketId) + U256(outcome));
+    public Task<BigInteger> TotalSupply() => Call(addresses.Usdc, TotalSupplySel);
+    public Task<BigInteger> Allowance(string owner, string spender) => Call(addresses.Usdc, AllowanceSel + A32(owner) + A32(spender));
 
     async Task<BigInteger> Call(string to, string data)
     {
