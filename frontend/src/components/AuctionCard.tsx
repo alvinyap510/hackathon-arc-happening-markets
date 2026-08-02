@@ -137,8 +137,9 @@ export default function AuctionCard({
         </div>
       )}
 
-      {/* FINALIZED pre-birth: pay-as-bid result */}
-      {request.phase === "FINALIZED" && final && !born && (
+      {/* FINALIZED: pay-as-bid result. Retained through the born state so the
+          slash line stays readable while the market opens (audit polish). */}
+      {final && (
         <div className="mt-6 animate-rise">
           <div className="grid grid-cols-3 gap-3 text-center">
             <div className="panel-inset p-3">
@@ -161,7 +162,9 @@ export default function AuctionCard({
               {final.slashed.map((s) => shortAddr(s.mm)).join(", ")} · {formatUsdc((BigInt(final.slashCount) * 500_000_000n).toString(), 0)} USDC → institution
             </span>
           </div>
-          <p className="mt-3 text-center text-xs text-ink-400">Pay-as-bid: each maker fills at its own quote. Locking collateral…</p>
+          {!born && (
+            <p className="mt-3 text-center text-xs text-ink-400">Pay-as-bid: each maker fills at its own quote. Locking collateral…</p>
+          )}
         </div>
       )}
 
@@ -181,10 +184,7 @@ export default function AuctionCard({
             <h4 className="font-display mt-2 text-3xl font-semibold text-paper-100">
               Funded at <span className="prism-text">{tickToPct(final.vwapTick)}</span>
             </h4>
-            <p className="num mt-2 text-xs text-ink-300">
-              marginal {tickToPct(final.marginalTick)} · vwap {tickToPct(final.vwapTick)} · {formatUsdc(final.filledQty, 0)} filled
-              · collateral locked on chain
-            </p>
+            <p className="num mt-2 text-xs text-ink-300">collateral locked on chain · the book opens at the auction marks</p>
           </div>
           {flightDone && (
             <div className="mt-5 animate-rise">

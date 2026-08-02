@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useStore } from "../lib/store";
 import type { NewRfmRequest, OutcomeSide, RfmRequest } from "../lib/types";
 import { formatUsdc, parseUsdc } from "../lib/format";
+import TxLink from "./TxLink";
 
 const BOND = "500000000"; // 500 USDC, symmetric with the MM bond
 
@@ -16,6 +17,7 @@ export default function RfmForm({ onPosted }: { onPosted: (r: RfmRequest) => voi
   const [maxPrice, setMaxPrice] = useState("620");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [postedTx, setPostedTx] = useState<string | null>(null);
 
   const qtyBase = parseUsdc(qty);
   const tick = Number(maxPrice);
@@ -44,7 +46,9 @@ export default function RfmForm({ onPosted }: { onPosted: (r: RfmRequest) => voi
         minMatch: minBase,
         maxPriceTick: tick,
       };
-      onPosted(await api.postRfmRequest(req));
+      const posted = await api.postRfmRequest(req);
+      setPostedTx(posted.txHash ?? null);
+      onPosted(posted);
       setQ("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Request rejected");
@@ -138,6 +142,12 @@ export default function RfmForm({ onPosted }: { onPosted: (r: RfmRequest) => voi
       <button type="submit" disabled={busy || !enough} className="btn-gold mt-4 w-full">
         {busy ? "Posting on chain…" : "Post request · lock escrow + bond"}
       </button>
+
+      {postedTx && (
+        <div className="mt-2 flex items-center justify-center gap-1.5 text-[11px] text-ink-300">
+          posted on chain <TxLink hash={postedTx} />
+        </div>
+      )}
     </form>
   );
 }

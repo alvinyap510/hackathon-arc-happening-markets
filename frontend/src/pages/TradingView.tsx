@@ -4,6 +4,7 @@ import type { Market } from "../lib/types";
 import { formatUsdc, tickToPct } from "../lib/format";
 import BookPanel from "../components/BookPanel";
 import OrderTicket from "../components/OrderTicket";
+import TxLink from "../components/TxLink";
 import { BornTag } from "../components/MarketCard";
 
 export default function TradingView({ market, onBack }: { market: Market; onBack: () => void }) {
@@ -12,6 +13,7 @@ export default function TradingView({ market, onBack }: { market: Market; onBack
   const trades = useTrades(market.marketId);
   const { orders } = useOpenOrders();
   const [redeemBusy, setRedeemBusy] = useState(false);
+  const [redeemTx, setRedeemTx] = useState<string | null>(null);
 
   const myOrders = orders.filter((o) => o.marketId === market.marketId);
   const myPositions = (balances?.positions ?? []).filter((p) => p.marketId === market.marketId);
@@ -20,7 +22,8 @@ export default function TradingView({ market, onBack }: { market: Market; onBack
   const redeem = async () => {
     setRedeemBusy(true);
     try {
-      await api.redeem(market.marketId);
+      const tx = await api.redeem(market.marketId);
+      setRedeemTx(tx.hash);
       await Promise.all([refreshBalances(), refreshMarkets()]);
     } finally {
       setRedeemBusy(false);
@@ -54,9 +57,12 @@ export default function TradingView({ market, onBack }: { market: Market; onBack
           </p>
         </div>
         {winningPos && (
-          <button onClick={redeem} disabled={redeemBusy} className="btn-gold">
-            {redeemBusy ? "Redeeming…" : `Redeem ${formatUsdc(winningPos.size)} USDC`}
-          </button>
+          <div className="flex items-center gap-3">
+            <button onClick={redeem} disabled={redeemBusy} className="btn-gold">
+              {redeemBusy ? "Redeeming…" : `Redeem ${formatUsdc(winningPos.size)} USDC`}
+            </button>
+            {redeemTx && <TxLink hash={redeemTx} />}
+          </div>
         )}
       </header>
 
@@ -70,12 +76,10 @@ export default function TradingView({ market, onBack }: { market: Market; onBack
             <div className="max-h-44 space-y-0.5 overflow-y-auto">
               {trades.map((t, i) => (
                 <div key={i} className="flex items-center justify-between rounded px-2 py-1 text-xs hover:bg-ink-800">
-                  <span className={`num font-semibold ${t.takerDirection.includes("BUY") ? "text-yes-400" : "text-no-400"}`}>
-                    {tickToPct(t.tick)}
-                  </span>
+                  <span className="num font-semibold text-paper-100">{tickToPct(t.yesBasisTick)}</span>
                   <span className="num text-paper-300">{formatUsdc(t.size, 0)}</span>
-                  <span className="text-[10px] text-ink-500">{t.takerDirection.replace("_", " ")}</span>
                   <span className="num text-[10px] text-ink-500">{new Date(t.at).toLocaleTimeString()}</span>
+                  {t.txHash ? <TxLink hash={t.txHash} label="tx ↗" /> : <span />}
                 </div>
               ))}
             </div>
@@ -92,7 +96,7 @@ export default function TradingView({ market, onBack }: { market: Market; onBack
               {myOrders.map((o) => (
                 <div key={o.orderId} className="flex items-center justify-between rounded bg-ink-900 px-2 py-1.5 text-xs">
                   <span className="num text-paper-200">
-                    {o.direction.replace("_", " ")} {formatUsdc(o.size, 0)} @ {o.tick}
+                    {o.side} {o.outcome} {formatUsdc(o.remaining, 0)} @ {o.price ?? "mkt"}
                   </span>
                   <button onClick={() => void api.cancelOrder(o.orderId)} className="text-[11px] font-semibold text-no-400 hover:text-no-300">
                     Cancel

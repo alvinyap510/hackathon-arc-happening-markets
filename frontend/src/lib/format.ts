@@ -63,3 +63,9 @@ export function formatDate(iso: string): string {
     year: "numeric",
   });
 }
+
+export const ARC_EXPLORER = "https://testnet.arcscan.app";
+
+export function txUrl(hash: string): string {
+  return `${ARC_EXPLORER}/tx/${hash}`;
+}
