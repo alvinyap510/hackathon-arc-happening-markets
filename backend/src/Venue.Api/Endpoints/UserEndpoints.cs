@@ -53,7 +53,29 @@ public static class UserEndpoints
         {
             var user = UserOf(req, sessions, cfg);
             if (user == null) return Results.Unauthorized();
-            return Results.Ok(await core.GetBalancesAsync(user));
+            var b = await core.GetBalancesAsync(user);
+            // G4: `wallet` = on-chain MockUSDC collateral balance (outside the Vault).
+            var wallet = await gateway.GetUsdcWalletBalanceAsync(user, CancellationToken.None);
+            return Results.Ok(new
+            {
+                user = b.User,
+                wallet = wallet.ToString(),
+                chainFree = b.ChainFree.ToString(),
+                reserved = b.Reserved.ToString(),
+                available = b.Available.ToString(),
+                positions = b.Positions,
+            });
+        });
+
+        // G4 faucet: mint the self-deployed collateral MockUSDC to the caller's wallet.
+        // Demo/dev convenience - the venue collateral is our own mock, freely mintable.
+        g.MapPost("/faucet", async (AmountReq req, HttpRequest http) =>
+        {
+            var user = UserOf(http, sessions, cfg);
+            if (user == null) return Results.Unauthorized();
+            var amt = Amount(req.Amount);
+            if (amt <= 0) return Results.BadRequest(new { error = "amount required" });
+            return await Submit(() => gateway.SubmitMintUsdcAsync(user, amt, CancellationToken.None));
         });
 
         g.MapPost("/vault/deposit", async (AmountReq req, HttpRequest http) =>

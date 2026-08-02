@@ -7,7 +7,7 @@ namespace Venue.Api.Endpoints;
 /// <summary>Trading + market lifecycle endpoints (PLAN_BACKEND §5).</summary>
 public static class TradingEndpoints
 {
-    public static RouteGroupBuilder MapTradingEndpoints(this IEndpointRouteBuilder app, SessionStore sessions, AppConfig cfg, VenueCore core, Venue.Chain.IChainGateway gateway)
+    public static RouteGroupBuilder MapTradingEndpoints(this IEndpointRouteBuilder app, SessionStore sessions, AppConfig cfg, VenueCore core, Venue.Chain.IChainGateway gateway, MarketMetadataStore metadata)
     {
         var g = app.MapGroup("/v1").WithTags("trading");
 
@@ -93,7 +93,12 @@ public static class TradingEndpoints
         g.MapGet("/markets", async () =>
         {
             var markets = await core.GetMarketsAsync();
-            return Results.Ok(markets.Select(MarketView).ToList());
+            var views = new List<object>();
+            foreach (var m in markets)
+            {
+                views.Add(await MarketViewAsync(core, metadata, m));
+            }
+            return Results.Ok(views);
         });
 
         g.MapGet("/markets/{id}", async (string id) =>
@@ -103,7 +108,7 @@ public static class TradingEndpoints
                 var m = await core.GetMarketAsync(id);
                 return Results.Ok(new
                 {
-                    market = MarketView(m),
+                    market = await MarketViewAsync(core, metadata, m),
                     trades = m.Trades.Select(t => new { tradeId = t.TradeId, tradeClass = t.Class.ToString().ToLowerInvariant(), size = t.Size.ToString(), yesBasisTick = t.YesBasisTick, batchId = t.BatchId, at = t.UnixSec }).ToList(),
                 });
             }
@@ -168,15 +173,45 @@ public static class TradingEndpoints
         return g;
     }
 
-    private static object MarketView(Market m) => new
+    /// <summary>G5/G1 market summary: bornFromRfm + server-computed midTick (mid of best
+    /// YES bid/ask, null when one-sided) + restart-durable question metadata by marketHash.</summary>
+    private static async Task<object> MarketViewAsync(VenueCore core, MarketMetadataStore metadata, Market m)
     {
-        marketId = m.MarketId,
-        exists = m.Exists,
-        closing = m.Closing,
-        resolved = m.Resolved,
-        winningOutcome = m.WinningOutcome?.ToString().ToLowerInvariant(),
-        born = m.BornRequestId == null ? null : new { requestId = m.BornRequestId.ToString(), marginalYesTick = m.BornMarginalYesTick, vwapYesTick = m.BornVwapYesTick, filled = m.BornFilledQuantity?.ToString() },
-    };
+        long? midTick = null;
+        try
+        {
+            var book = await core.GetBookAsync(m.MarketId);
+            if (book.YesBids.Count > 0 && book.YesAsks.Count > 0)
+            {
+                var bestBid = book.YesBids.Max(l => l.Price);
+                var bestAsk = book.YesAsks.Min(l => l.Price);
+                midTick = (bestBid + bestAsk) / 2;
+            }
+        }
+        catch (KeyNotFoundException) { /* market not born yet: one-sided/null mid */ }
+
+        MarketMetadata? meta = null;
+        if (m.BornRequestId != null)
+        {
+            var rfm = await core.GetRfmRequestAsync(m.BornRequestId.Value);
+            if (rfm != null) meta = metadata.Get(rfm.Market);
+        }
+
+        return new
+        {
+            marketId = m.MarketId,
+            questionText = meta?.QuestionText,
+            resolutionSource = meta?.ResolutionSource,
+            closeTime = meta?.CloseTime?.ToString(),
+            exists = m.Exists,
+            closing = m.Closing,
+            resolved = m.Resolved,
+            winningOutcome = m.WinningOutcome?.ToString().ToLowerInvariant(),
+            bornFromRfm = m.BornRequestId != null,
+            midTick,
+            born = m.BornRequestId == null ? null : new { requestId = m.BornRequestId.ToString(), marginalYesTick = m.BornMarginalYesTick, vwapYesTick = m.BornVwapYesTick, filled = m.BornFilledQuantity?.ToString() },
+        };
+    }
 
     private static object OrderView(Order o) => new
     {
