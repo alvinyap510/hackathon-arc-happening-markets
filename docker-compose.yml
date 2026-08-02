@@ -1,0 +1,72 @@
+# E2E harness: anvil (local chain) + one-shot deploy + real-Nethereum backend + driver.
+#
+#   docker compose up          # brings the stack green (anvil + deploy + backend)
+#   make e2e                   # up the stack, run the driver against it, tear down
+#
+# The deploy job runs DeployE2E.s.sol on Anvil (MockUSDC collateral + the four venue
+# contracts), writes ./e2e/.runtime/addresses.json and ./e2e/.runtime/backend.env.
+# The backend boots in REAL Nethereum mode (Venue__Simulate=false) pointed at Anvil.
+# The driver (one-shot, profile "driver") runs the full happy path over the backend API
+# and asserts on-chain balances conserve.
+#
+# Collateral vs gas (never conflate):
+#   - COLLATERAL = MockUSDC, a self-deployed 6-dec ERC-20 we mint freely. The venue
+#     trades THIS on both Anvil now and Arc testnet later (the real Arc system USDC at
+#     0x3600...0000 is Circle-issued and not mintable to demo size).
+#   - GAS (tx fees) = ETH on Anvil (throwaway EOAs funded via anvil_setBalance). On Arc
+#     gas becomes real native USDC via faucet / Gas Station SCA sponsorship (tier-2).
+services:
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:latest
+    command: ["anvil", "--host", "0.0.0.0", "--port", "8545", "--chain-id", "31337", "--silent"]
+    ports:
+      - "8545:8545"
+    healthcheck:
+      test: ["CMD", "cast", "block-number", "--rpc-url", "http://localhost:8545"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+      start_period: 1s
+
+  deploy:
+    image: ghcr.io/foundry-rs/foundry:latest
+    depends_on:
+      anvil:
+        condition: service_healthy
+    working_dir: /app/contracts
+    volumes:
+      - ./contracts:/app/contracts
+      - ./e2e:/app/e2e
+      - ./e2e/.runtime:/app/shared
+    environment:
+      E2E_RPC: http://anvil:8545
+      E2E_CHAIN_ID: "31337"
+      E2E_OUT: /app/shared/addresses.json
+      E2E_BACKEND_ENV: /app/shared/backend.env
+      # Well-known public Anvil dev key (account #0). Throwaway/dev only.
+      DEPLOYER_KEY: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+      OPERATOR_ADDRESS: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["/app/e2e/deploy.sh"]
+
+  backend:
+    build: ./backend
+    depends_on:
+      deploy:
+        condition: service_completed_successfully
+    env_file: ./e2e/.runtime/backend.env
+    ports:
+      - "8080:8080"
+
+  driver:
+    build: ./e2e/Driver
+    profiles: ["driver"]
+    depends_on:
+      backend:
+        condition: service_started
+    environment:
+      E2E_RPC: http://anvil:8545
+      E2E_API: http://backend:8080
+      E2E_SHARED: /app/shared
+    volumes:
+      - ./e2e/.runtime:/app/shared
