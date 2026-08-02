@@ -1,4 +1,5 @@
 using Venue.Circle;
+using Venue.Chain;
 using static Venue.Api.Endpoints.EndpointHelpers;
 
 namespace Venue.Api.Endpoints;
@@ -6,16 +7,19 @@ namespace Venue.Api.Endpoints;
 /// <summary>Session / wallet / bridge / funds endpoints (PLAN_BACKEND §5).</summary>
 public static class UserEndpoints
 {
-    public static RouteGroupBuilder MapUserEndpoints(this IEndpointRouteBuilder app, SessionStore sessions, AppConfig cfg, ICircleServices circle, VenueCore core, Venue.Chain.IChainGateway gateway)
+    public static RouteGroupBuilder MapUserEndpoints(this IEndpointRouteBuilder app, SessionStore sessions, AppConfig cfg, ICircleServices circle, VenueCore core, Venue.Chain.IChainGateway gateway, DevAccountStore devAccounts)
     {
         var g = app.MapGroup("/v1").WithTags("user");
 
         g.MapPost("/session", async (BindSessionReq req) =>
         {
             if (string.IsNullOrWhiteSpace(req.Ref)) return Results.BadRequest(new { error = "ref required" });
-            var session = await circle.BindSessionAsync(req.Ref, CancellationToken.None);
-            var token = sessions.Create(session.Address);
-            return Results.Ok(new { token, address = session.Address, gasless = circle.GaslessSupported });
+            // SEAM 1: provision a SIGNABLE, gas-funded account for the email (dev mode).
+            // The backend derives and holds the key; user-signed txs (approve+deposit,
+            // postRequest, reveal, redeem) then work via the user-key resolver.
+            var address = await devAccounts.ProvisionAsync(req.Ref, CancellationToken.None);
+            var token = sessions.Create(address);
+            return Results.Ok(new { token, address, gasless = circle.GaslessSupported });
         });
 
         // Real-chain demo sessions: bind a session directly to an address the host holds a
@@ -63,7 +67,7 @@ public static class UserEndpoints
                 chainFree = b.ChainFree.ToString(),
                 reserved = b.Reserved.ToString(),
                 available = b.Available.ToString(),
-                positions = b.Positions,
+                positions = b.Positions.Select(p => new { tokenId = p.TokenId, marketId = p.MarketId, outcome = p.Outcome.ToString().ToLowerInvariant(), amount = p.Amount.ToString() }).ToList(),
             });
         });
 

@@ -105,5 +105,12 @@ public interface IChainGateway
     /// <summary>On-chain MockUSDC wallet balance (G4: `wallet` on GET /v1/balances).</summary>
     Task<BigInteger> GetUsdcWalletBalanceAsync(string user, CancellationToken ct);
 
+    /// <summary>Dev-mode only: fund an account with gas so its user-signed txs can mine
+    /// (anvil_setBalance on a local chain). No-op on a chain with a real faucet / Gas Station.</summary>
+    Task FundGasAsync(string address, CancellationToken ct);
+
+    /// <summary>Operator-only: create a non-RFM market directly on OutcomeTokens (seeded markets).</summary>
+    Task SubmitCreateMarketAsync(string marketId, byte[] meta, CancellationToken ct);
+
     Task<TxStatus> TxStatusAsync(string txHash, CancellationToken ct);
 }

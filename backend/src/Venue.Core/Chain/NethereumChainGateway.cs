@@ -290,6 +290,24 @@ public sealed class NethereumChainGateway : IChainGateway
     public async Task<BigInteger> GetUsdcWalletBalanceAsync(string user, CancellationToken ct)
         => await CallUint256Async(_cfg.NormalizedUsdc, "0x70a08231" + Pad32Address(user), ct); // balanceOf(address)
 
+    public async Task FundGasAsync(string address, CancellationToken ct)
+    {
+        var wei = "0x" + (BigInteger.Pow(10, 18) * 1).ToString("x"); // 1 ETH
+        var req = new Nethereum.JsonRpc.Client.RpcRequest(Guid.NewGuid().ToString(), "anvil_setBalance",
+            new object[] { Domain.Addresses.Normalize(address), wei });
+        await _operatorWeb3.Client.SendRequestAsync(req);
+    }
+
+    public async Task SubmitCreateMarketAsync(string marketId, byte[] meta, CancellationToken ct)
+    {
+        var handler = _operatorWeb3.Eth.GetContractHandler(_cfg.NormalizedOutcomeTokens);
+        await handler.SendRequestAsync(new CreateMarketFunction
+        {
+            MarketId = Infrastructure.Hash.HexToBytes(marketId),
+            Meta = meta,
+        });
+    }
+
     public async Task<TxStatus> TxStatusAsync(string txHash, CancellationToken ct)
     {
         var receipt = await _operatorWeb3.Eth.Transactions.GetTransactionReceipt.SendRequestAsync(txHash);

@@ -13,11 +13,20 @@ builder.WebHost.UseUrls("http://0.0.0.0:8080");
 
 var appCfg = AppConfig.Load(builder.Configuration);
 
+// Dev-mode signable accounts (SEAM 1): email login provisions a backend-held keypair.
+// The gateway's user-key resolver checks the configured DemoUsers (the /session/bind
+// bridge) first, then dev-provisioned accounts.
+var devAccounts = new DevAccountStore(appCfg.SaltSecret);
+Func<string, string?> resolveKey = address =>
+    appCfg.DemoUserKeys.TryGetValue(Addresses.Normalize(address), out var key)
+        ? key
+        : devAccounts.KeyForAddress(Addresses.Normalize(address));
+
 // --- chain seam: simulated (local demo) or Nethereum (Arc RPC) ---
 IChainGateway gateway = appCfg.Simulate
     ? new SimulatedChainGateway(appCfg.Chain)
-    : new NethereumChainGateway(appCfg.Chain, appCfg.OperatorPrivateKey,
-        address => appCfg.DemoUserKeys.TryGetValue(Addresses.Normalize(address), out var key) ? key : null);
+    : new NethereumChainGateway(appCfg.Chain, appCfg.OperatorPrivateKey, resolveKey);
+devAccounts.AttachGateway(gateway);
 
 // --- Circle seam: mock unless credentials are configured ---
 ICircleServices circle = string.IsNullOrWhiteSpace(appCfg.CircleApiKey)
@@ -41,7 +50,9 @@ builder.Services.AddSingleton(core);
 builder.Services.AddSingleton(hub);
 builder.Services.AddSingleton(sessions);
 builder.Services.AddSingleton(marketMetadata);
+builder.Services.AddSingleton(devAccounts);
 builder.Services.AddHostedService(_ => new CoreHostedService(core));
+builder.Services.AddHostedService(_ => new MarketSeederHostedService(core, gateway, marketMetadata, appCfg));
 
 // Money amounts travel as decimal strings everywhere in the API.
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new BigIntegerJsonConverter()));
@@ -49,7 +60,7 @@ builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Ad
 var app = builder.Build();
 app.UseWebSockets();
 
-app.MapUserEndpoints(sessions, appCfg, circle, core, gateway);
+app.MapUserEndpoints(sessions, appCfg, circle, core, gateway, devAccounts);
 app.MapTradingEndpoints(sessions, appCfg, core, gateway, marketMetadata);
 app.MapRfmEndpoints(sessions, appCfg, core, gateway, salts, marketMetadata);
 app.MapOpsEndpoints(appCfg, core, gateway);
