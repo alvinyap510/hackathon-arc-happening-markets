@@ -134,7 +134,7 @@ public static class TradingEndpoints
             // the resolution gate (book + pending fills drained) before the on-chain tx.
             var user = UserOf(http, sessions, cfg);
             if (user == null || !string.Equals(user, cfg.Chain.OperatorAddress, StringComparison.OrdinalIgnoreCase))
-                return Results.Forbid();
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
             var outcome = ParseEnum<Outcome>(req.Outcome);
             if (outcome == null) return Results.BadRequest(new { error = "outcome must be yes|no" });
             try

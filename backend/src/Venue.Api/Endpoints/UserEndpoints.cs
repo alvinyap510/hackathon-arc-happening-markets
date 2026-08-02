@@ -26,7 +26,7 @@ public static class UserEndpoints
         {
             if (string.IsNullOrWhiteSpace(req.Address)) return Results.BadRequest(new { error = "address required" });
             var addr = Venue.Domain.Addresses.Normalize(req.Address);
-            if (!cfg.DemoUserKeys.ContainsKey(addr)) return Results.Forbid();
+            if (!cfg.DemoUserKeys.ContainsKey(addr)) return Results.StatusCode(StatusCodes.Status403Forbidden);
             var token = sessions.Create(addr);
             return Results.Ok(new { token, address = addr, gasless = circle.GaslessSupported });
         });
