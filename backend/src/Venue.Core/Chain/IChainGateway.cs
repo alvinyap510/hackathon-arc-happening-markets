@@ -45,6 +45,7 @@ public sealed record ChainConfig(
     public string NormalizedOutcomeTokens => Domain.Addresses.Normalize(OutcomeTokens);
     public string NormalizedExchange => Domain.Addresses.Normalize(Exchange);
     public string NormalizedRfm => Domain.Addresses.Normalize(Rfm);
+    public string NormalizedUsdc => Domain.Addresses.Normalize(Usdc);
 }
 
 /// <summary>
@@ -94,6 +95,15 @@ public interface IChainGateway
     Task<string> SubmitRevealQuoteAsync(string user, BigInteger requestId, BigInteger priceTick, BigInteger size, BigInteger salt, CancellationToken ct);
     Task<string> SubmitCancelRequestAsync(string user, BigInteger requestId, CancellationToken ct);
     Task<string> SubmitRedeemAsync(string user, string marketId, BigInteger amt, CancellationToken ct);
+
+    /// <summary>Authoritative on-chain RFM requestCount (G6: the requestId of the last post).</summary>
+    Task<BigInteger> GetRequestCountAsync(CancellationToken ct);
+
+    /// <summary>Mint the self-deployed collateral MockUSDC to a user (G4 faucet).</summary>
+    Task<string> SubmitMintUsdcAsync(string user, BigInteger amt, CancellationToken ct);
+
+    /// <summary>On-chain MockUSDC wallet balance (G4: `wallet` on GET /v1/balances).</summary>
+    Task<BigInteger> GetUsdcWalletBalanceAsync(string user, CancellationToken ct);
 
     Task<TxStatus> TxStatusAsync(string txHash, CancellationToken ct);
 }

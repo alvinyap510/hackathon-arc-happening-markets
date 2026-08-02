@@ -221,7 +221,19 @@ public sealed class NethereumChainGateway : IChainGateway
     // ----------------------------------------------------------- user ops
 
     public async Task<string> SubmitDepositAsync(string user, BigInteger amt, CancellationToken ct)
-        => await SendAsUser(user, _cfg.NormalizedVault, new DepositFunction { Amt = amt }, ct);
+    {
+        // approve-before-deposit (INTEGRATION_CONTRACT): a fresh (faucet'd) account has ZERO
+        // MockUSDC allowance, so a lone Vault.deposit reverts on transferFrom. Submit
+        // approve(Vault, amt) then Vault.deposit from the user's dev key, awaiting the
+        // approve receipt so the user nonce stays strictly sequential.
+        var approveTx = await SendAsUser(user, _cfg.NormalizedUsdc, new UsdcApproveFunction
+        {
+            Spender = _cfg.NormalizedVault,
+            Amount = amt,
+        }, ct);
+        await AwaitTxMinedAsync(approveTx, ct);
+        return await SendAsUser(user, _cfg.NormalizedVault, new DepositFunction { Amt = amt }, ct);
+    }
 
     public async Task<string> SubmitWithdrawAsync(string user, BigInteger amt, CancellationToken ct)
         => await SendAsUser(user, _cfg.NormalizedVault, new WithdrawFunction { Amt = amt }, ct);
@@ -262,6 +274,22 @@ public sealed class NethereumChainGateway : IChainGateway
     public async Task<string> SubmitCancelRequestAsync(string user, BigInteger requestId, CancellationToken ct)
         => await SendAsUser(user, _cfg.NormalizedRfm, new RfmCancelFunction { RequestId = requestId }, ct);
 
+    public async Task<BigInteger> GetRequestCountAsync(CancellationToken ct)
+        => await CallUint256Async(_cfg.NormalizedRfm, "0x5badbe4c", ct); // requestCount()
+
+    public async Task<string> SubmitMintUsdcAsync(string user, BigInteger amt, CancellationToken ct)
+    {
+        // The faucet mints the self-deployed collateral MockUSDC. mint is permissionless;
+        // the OPERATOR signs so a fresh faucet'd account needs no gas to receive funds.
+        var handler = _operatorWeb3.Eth.GetContractHandler(_cfg.NormalizedUsdc);
+        var txHash = await handler.SendRequestAsync(new UsdcMintFunction { To = Domain.Addresses.Normalize(user), Amt = amt });
+        await AwaitTxMinedAsync(txHash, ct);
+        return txHash;
+    }
+
+    public async Task<BigInteger> GetUsdcWalletBalanceAsync(string user, CancellationToken ct)
+        => await CallUint256Async(_cfg.NormalizedUsdc, "0x70a08231" + Pad32Address(user), ct); // balanceOf(address)
+
     public async Task<TxStatus> TxStatusAsync(string txHash, CancellationToken ct)
     {
         var receipt = await _operatorWeb3.Eth.Transactions.GetTransactionReceipt.SendRequestAsync(txHash);
@@ -299,5 +327,38 @@ public sealed class NethereumChainGateway : IChainGateway
         var web3 = CreateWeb3(key);
         var handler = web3.Eth.GetContractHandler(to);
         return await handler.SendRequestAsync(msg);
+    }
+
+    /// <summary>Poll until a user-op tx reaches a definitive terminal state; throw loudly
+    /// on revert (approve-before-deposit needs the approve mined before the deposit send).</summary>
+    private async Task AwaitTxMinedAsync(string txHash, CancellationToken ct)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var status = await TxStatusAsync(txHash, ct);
+            if (status == TxStatus.Confirmed) return;
+            if (status == TxStatus.Reverted)
+                throw new InvalidOperationException($"tx reverted: {txHash}");
+            await Task.Delay(500, ct);
+        }
+        throw new InvalidOperationException($"tx not mined within 30s: {txHash}");
+    }
+
+    /// <summary>Raw eth_call uint256 read, hex-parsed manually. Nethereum 6.1's QueryAsync
+    /// mis-decodes high-bit uint256s (the E2E driver proved it), so reads are done directly.</summary>
+    private async Task<BigInteger> CallUint256Async(string to, string data, CancellationToken ct)
+    {
+        var call = new CallInput(data, to) { From = _cfg.OperatorAddress };
+        var result = await _operatorWeb3.Eth.Transactions.Call.SendRequestAsync(call);
+        if (string.IsNullOrEmpty(result) || result == "0x") return BigInteger.Zero;
+        return BigInteger.Parse("0" + result[2..], System.Globalization.NumberStyles.HexNumber);
+    }
+
+    private static string Pad32Address(string address)
+    {
+        var h = Domain.Addresses.Normalize(address);
+        if (h.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) h = h[2..];
+        return h.PadLeft(64, '0');
     }
 }

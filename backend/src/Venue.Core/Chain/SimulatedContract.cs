@@ -41,6 +41,7 @@ public sealed class SimulatedContract
     private readonly string _operator;
 
     private readonly Dictionary<string, BigInteger> _usdc = new();
+    private readonly Dictionary<string, BigInteger> _wallet = new();
     private readonly Dictionary<string, BigInteger> _locked = new();
     private readonly Dictionary<(string, string), BigInteger> _tokens = new();
     private readonly Dictionary<string, (string User, BigInteger Amount, bool Live)> _locks = new();
@@ -87,6 +88,19 @@ public sealed class SimulatedContract
     public BigInteger UsdcOf(string user) => _usdc.GetValueOrDefault(Domain.Addresses.Normalize(user));
     public BigInteger TokenOf(string user, string tokenId) => Tok(Domain.Addresses.Normalize(user), Hash.NormalizeBytes32(tokenId));
     public BigInteger FreeOf(string user) => Free(Domain.Addresses.Normalize(user));
+    public BigInteger WalletOf(string user) => _wallet.GetValueOrDefault(Domain.Addresses.Normalize(user));
+    public BigInteger RequestCount => _requestCount;
+
+    // ------------------------------------------------------------ MockUSDC (faucet)
+
+    /// <summary>G4 faucet: mint the self-deployed collateral MockUSDC to a user's wallet.
+    /// Emits no venue event (the indexer only watches Vault/OT/Exchange/RFM).</summary>
+    public SimOpResult MintUsdc(string user, BigInteger amt, TxCtx ctx)
+    {
+        if (amt <= 0) return Revert(ctx, "ZeroAmount");
+        _wallet[Domain.Addresses.Normalize(user)] = _wallet.GetValueOrDefault(Domain.Addresses.Normalize(user)) + amt;
+        return Ok(ctx);
+    }
 
     private BigInteger Free(string user) => _usdc.GetValueOrDefault(user) - _locked.GetValueOrDefault(user);
     private BigInteger Tok(string user, string id) => _tokens.GetValueOrDefault((user, id));

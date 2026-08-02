@@ -122,6 +122,15 @@ public sealed class SimulatedChainGateway : IChainGateway
     public async Task<string> SubmitCancelRequestAsync(string user, BigInteger requestId, CancellationToken ct)
         => Record(r => _contract.CancelRequest(user, requestId, r));
 
+    public Task<BigInteger> GetRequestCountAsync(CancellationToken ct)
+        => Task.FromResult(_contract.RequestCount);
+
+    public async Task<string> SubmitMintUsdcAsync(string user, BigInteger amt, CancellationToken ct)
+        => Record(r => _contract.MintUsdc(user, amt, r));
+
+    public Task<BigInteger> GetUsdcWalletBalanceAsync(string user, CancellationToken ct)
+        => Task.FromResult(_contract.WalletOf(user));
+
     public Task<TxStatus> TxStatusAsync(string txHash, CancellationToken ct)
     {
         lock (_sync)

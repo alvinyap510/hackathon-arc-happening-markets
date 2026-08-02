@@ -12,6 +12,22 @@ public sealed class DepositFunction : FunctionMessage
     [Parameter("uint256", "amt", 1)] public BigInteger Amt { get; set; }
 }
 
+// ------------------------------------------------ collateral (MockUSDC) surface
+
+[Function("approve")]
+public sealed class UsdcApproveFunction : FunctionMessage
+{
+    [Parameter("address", "spender", 1)] public string Spender { get; set; } = "";
+    [Parameter("uint256", "amount", 2)] public BigInteger Amount { get; set; }
+}
+
+[Function("mint")]
+public sealed class UsdcMintFunction : FunctionMessage
+{
+    [Parameter("address", "to", 1)] public string To { get; set; } = "";
+    [Parameter("uint256", "amt", 2)] public BigInteger Amt { get; set; }
+}
+
 [Function("withdraw")]
 public sealed class WithdrawFunction : FunctionMessage
 {
@@ -51,6 +67,11 @@ public sealed class PostRequestFunction : FunctionMessage
     [Parameter("uint256", "minMatch", 5)] public BigInteger MinMatch { get; set; }
     [Parameter("uint256", "commitDeadline", 6)] public BigInteger CommitDeadline { get; set; }
     [Parameter("uint256", "revealDeadline", 7)] public BigInteger RevealDeadline { get; set; }
+}
+
+[Function("requestCount")]
+public sealed class RequestCountFunction : FunctionMessage
+{
 }
 
 [Function("commitQuote")]
