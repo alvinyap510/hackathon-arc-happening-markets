@@ -109,6 +109,21 @@ public sealed class SimulatedContract
         return Ok(ctx, new Deposited(_vault, ctx.BlockNumber, ctx.NextLogIndex(), ctx.TxHash, user, amt));
     }
 
+    public SimOpResult DepositTokens(string user, string tokenId, BigInteger amt, TxCtx ctx)
+    {
+        if (amt <= 0) return Revert(ctx, "ZeroAmount");
+        AddTok(user, tokenId, amt);
+        return Ok(ctx, new TokensDeposited(_vault, ctx.BlockNumber, ctx.NextLogIndex(), ctx.TxHash, user, tokenId, amt));
+    }
+
+    public SimOpResult WithdrawTokens(string user, string tokenId, BigInteger amt, TxCtx ctx)
+    {
+        if (amt <= 0) return Revert(ctx, "ZeroAmount");
+        if (Tok(user, tokenId) < amt) return Revert(ctx, "InsufficientBalance");
+        SubTok(user, tokenId, amt);
+        return Ok(ctx, new TokensWithdrawn(_vault, ctx.BlockNumber, ctx.NextLogIndex(), ctx.TxHash, user, tokenId, amt));
+    }
+
     public SimOpResult Withdraw(string user, BigInteger amt, TxCtx ctx)
     {
         if (amt <= 0) return Revert(ctx, "ZeroAmount");

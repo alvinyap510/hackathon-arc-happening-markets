@@ -67,13 +67,13 @@ public sealed class Engine
         var (asset, amount) = Order.ReserveFor(market.MarketId, req.Outcome, req.Side, req.Size, req.Price);
         if (_ledger.Available(req.User, asset) < amount)
             return Reject(req, market, asset, amount, "insufficient_available");
-        if (req.ClientOrderId != null && _byClientId.ContainsKey(req.ClientOrderId))
+        if (!string.IsNullOrEmpty(req.ClientOrderId) && _byClientId.ContainsKey(req.ClientOrderId))
             return Reject(req, market, asset, amount, "duplicate_client_order_id");
 
         _ledger.Reserve(req.User, asset, amount);
         var order = BuildOrder(req, market, asset, amount);
         _orders[order.OrderId] = order;
-        if (req.ClientOrderId != null) _byClientId[req.ClientOrderId] = order;
+        if (!string.IsNullOrEmpty(req.ClientOrderId)) _byClientId[req.ClientOrderId] = order;
 
         var fills = Matcher.Match(order, Book(market.MarketId), market);
         return FinalizePlacement(order, market, fills);
@@ -131,7 +131,7 @@ public sealed class Engine
         var bookPrice = req.Type == OrderType.Market
             ? (req.Side == OrderSide.Buy ? Order.MarketBuyBookPrice : Order.MarketSellBookPrice)
             : Order.StoredPriceFor(req.Outcome, req.Price);
-        var orderId = req.ClientOrderId != null ? "o_" + req.ClientOrderId : "o_" + Guid.NewGuid().ToString("N");
+        var orderId = !string.IsNullOrEmpty(req.ClientOrderId) ? "o_" + req.ClientOrderId : "o_" + Guid.NewGuid().ToString("N");
         return new Order
         {
             OrderId = orderId,

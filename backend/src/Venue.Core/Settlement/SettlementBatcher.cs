@@ -112,7 +112,9 @@ public sealed class SettlementBatcher
 
             if (outcome.Status == TxStatus.Reverted && outcome.Revert is { FailIndex: int idx } && idx < remaining.Count && idx >= 0)
             {
-                await _core.RepairBatchAsync(batchId, remaining, outcome.Revert);
+                // Pass a snapshot: the coordinator runs under the gate and must not see the
+                // list mutate when the failing trade is removed below.
+                await _core.RepairBatchAsync(batchId, remaining.ToList(), outcome.Revert);
                 remaining.RemoveAt(idx);
                 continue;
             }

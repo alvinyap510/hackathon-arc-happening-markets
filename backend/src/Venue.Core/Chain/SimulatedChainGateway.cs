@@ -78,6 +78,12 @@ public sealed class SimulatedChainGateway : IChainGateway
     public async Task<string> SubmitWithdrawAsync(string user, BigInteger amt, CancellationToken ct)
         => Record(r => _contract.Withdraw(user, amt, r));
 
+    public async Task<string> SubmitDepositTokensAsync(string user, string tokenId, BigInteger amt, CancellationToken ct)
+        => Record(r => _contract.DepositTokens(user, tokenId, amt, r));
+
+    public async Task<string> SubmitWithdrawTokensAsync(string user, string tokenId, BigInteger amt, CancellationToken ct)
+        => Record(r => _contract.WithdrawTokens(user, tokenId, amt, r));
+
     public async Task<string> SubmitRedeemAsync(string user, string marketId, BigInteger amt, CancellationToken ct)
         => Record(r => _contract.Redeem(user, marketId, amt, r));
 

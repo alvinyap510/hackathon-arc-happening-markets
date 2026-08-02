@@ -38,7 +38,11 @@ public static class Matcher
             maker.Remaining -= size;
             taker.Remaining -= size;
             fills.Add(new MatchedTrade(trade, maker.OrderId, taker.OrderId, maker, taker, size));
-            if (maker.Remaining.IsZero) book.Remove(maker);
+            if (maker.Remaining.IsZero)
+            {
+                maker.Status = OrderStatus.Filled;
+                book.Remove(maker);
+            }
         }
         return fills;
     }

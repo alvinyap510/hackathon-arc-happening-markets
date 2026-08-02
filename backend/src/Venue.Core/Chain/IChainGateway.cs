@@ -58,6 +58,8 @@ public interface IChainGateway
 
     Task<string> SubmitDepositAsync(string user, BigInteger amt, CancellationToken ct);
     Task<string> SubmitWithdrawAsync(string user, BigInteger amt, CancellationToken ct);
+    Task<string> SubmitDepositTokensAsync(string user, string tokenId, BigInteger amt, CancellationToken ct);
+    Task<string> SubmitWithdrawTokensAsync(string user, string tokenId, BigInteger amt, CancellationToken ct);
     Task<string> SubmitPostRequestAsync(string user, string market, RfmSide side, BigInteger quantity, BigInteger maxPriceTick, BigInteger minMatch, BigInteger commitDeadline, BigInteger revealDeadline, CancellationToken ct);
     Task<string> SubmitCommitQuoteAsync(string user, BigInteger requestId, string commitHash, CancellationToken ct);
     Task<string> SubmitRevealQuoteAsync(string user, BigInteger requestId, BigInteger priceTick, BigInteger size, BigInteger salt, CancellationToken ct);

@@ -18,6 +18,20 @@ public sealed class WithdrawFunction : FunctionMessage
     [Parameter("uint256", "amt", 1)] public BigInteger Amt { get; set; }
 }
 
+[Function("depositTokens")]
+public sealed class DepositTokensFunction : FunctionMessage
+{
+    [Parameter("uint256", "id", 1)] public BigInteger Id { get; set; }
+    [Parameter("uint256", "amt", 2)] public BigInteger Amt { get; set; }
+}
+
+[Function("withdrawTokens")]
+public sealed class WithdrawTokensFunction : FunctionMessage
+{
+    [Parameter("uint256", "id", 1)] public BigInteger Id { get; set; }
+    [Parameter("uint256", "amt", 2)] public BigInteger Amt { get; set; }
+}
+
 [Function("redeem")]
 public sealed class VaultRedeemFunction : FunctionMessage
 {

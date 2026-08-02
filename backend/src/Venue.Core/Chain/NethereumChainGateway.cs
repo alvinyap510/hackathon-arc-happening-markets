@@ -179,6 +179,18 @@ public sealed class NethereumChainGateway : IChainGateway
     public async Task<string> SubmitWithdrawAsync(string user, BigInteger amt, CancellationToken ct)
         => await SendAsUser(user, _cfg.NormalizedVault, new WithdrawFunction { Amt = amt }, ct);
 
+    public async Task<string> SubmitDepositTokensAsync(string user, string tokenId, BigInteger amt, CancellationToken ct)
+        => await SendAsUser(user, _cfg.NormalizedVault, new DepositTokensFunction { Id = HashToUint(tokenId), Amt = amt }, ct);
+
+    public async Task<string> SubmitWithdrawTokensAsync(string user, string tokenId, BigInteger amt, CancellationToken ct)
+        => await SendAsUser(user, _cfg.NormalizedVault, new WithdrawTokensFunction { Id = HashToUint(tokenId), Amt = amt }, ct);
+
+    private static BigInteger HashToUint(string hex)
+    {
+        var h = hex.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? hex[2..] : hex;
+        return BigInteger.Parse("0" + h, System.Globalization.NumberStyles.HexNumber);
+    }
+
     public async Task<string> SubmitRedeemAsync(string user, string marketId, BigInteger amt, CancellationToken ct)
         => await SendAsUser(user, _cfg.NormalizedVault, new VaultRedeemFunction { MarketId = Infrastructure.Hash.HexToBytes(marketId), Amt = amt }, ct);
 

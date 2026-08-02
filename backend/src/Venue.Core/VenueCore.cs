@@ -25,7 +25,7 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
 {
     private readonly ChainConfig _cfg;
     private readonly IChainGateway _gateway;
-    private readonly IEventSink _sink;
+    private IEventSink _sink;
     private readonly AsyncGate _gate = new();
     private readonly Dictionary<string, Market> _markets = new();
     private readonly LedgerImpl _ledger;
@@ -51,6 +51,9 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
     public ChainConfig Config => _cfg;
     public IChainGateway Gateway => _gateway;
     public int PendingSettlements => _batcher.PendingCount;
+
+    /// <summary>Attach the broadcast sink (the WS hub) after construction — the hub needs the core.</summary>
+    public void SetSink(IEventSink sink) => _sink = sink;
 
     private Outcome? ResolvedOutcome(string marketId)
         => _markets.TryGetValue(Infrastructure.Hash.NormalizeBytes32(marketId), out var m) ? m.WinningOutcome : null;

@@ -54,13 +54,14 @@ public static class Hash
             EncodeUint256(salt));
     }
 
-    /// <summary>tradeId = keccak256(marketId || makerOrderId || takerOrderId || fillSeq) — deterministic per fill.</summary>
+    /// <summary>tradeId = keccak256(marketId || makerOrderId || takerOrderId || fillSeq) — deterministic
+    /// per fill. Order ids are opaque strings (e.g. "o_..."), so they hash as UTF-8 bytes.</summary>
     public static string TradeId(string marketId, string makerOrderId, string takerOrderId, BigInteger fillSeq)
     {
         return KeccakHex(
             HexToBytes(marketId),
-            HexToBytes(makerOrderId),
-            HexToBytes(takerOrderId),
+            System.Text.Encoding.UTF8.GetBytes(makerOrderId),
+            System.Text.Encoding.UTF8.GetBytes(takerOrderId),
             EncodeUint256(fillSeq));
     }
 
