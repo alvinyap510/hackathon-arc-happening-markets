@@ -1,5 +1,6 @@
 using Venue.Circle;
 using Venue.Chain;
+using Microsoft.AspNetCore.RateLimiting;
 using static Venue.Api.Endpoints.EndpointHelpers;
 
 namespace Venue.Api.Endpoints;
@@ -19,7 +20,7 @@ public static class UserEndpoints
             var address = await sessionProvisioner.ProvisionAsync(req.Ref, CancellationToken.None);
             var token = sessions.Create(address);
             return Results.Ok(new { token, address, gasless = circle.GaslessSupported });
-        });
+        }).RequireRateLimiting("session");
 
         // Real-chain demo sessions: bind a session directly to an address the host holds a
         // dev-controlled key for (Venue:DemoUsers). The Circle mock derives non-signable
@@ -32,7 +33,7 @@ public static class UserEndpoints
             if (!cfg.DemoUserKeys.ContainsKey(addr)) return Results.StatusCode(StatusCodes.Status403Forbidden);
             var token = sessions.Create(addr);
             return Results.Ok(new { token, address = addr, gasless = circle.GaslessSupported });
-        });
+        }).RequireRateLimiting("session");
 
         g.MapGet("/wallet", (HttpRequest req) =>
         {
@@ -79,7 +80,7 @@ public static class UserEndpoints
             var amt = Amount(req.Amount);
             if (amt <= 0) return Results.BadRequest(new { error = "amount required" });
             return await Submit(() => gateway.SubmitMintUsdcAsync(user, amt, CancellationToken.None));
-        });
+        }).RequireRateLimiting("faucet");
 
         g.MapPost("/vault/deposit", async (AmountReq req, HttpRequest http) =>
         {

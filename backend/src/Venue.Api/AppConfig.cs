@@ -26,6 +26,12 @@ public sealed class AppConfig
     public required IReadOnlyList<SeedMarket> SeedMarkets { get; init; }
     public required bool SeedMarketsEnabled { get; init; }
 
+    // Public-exposure safety (Caddy HTTPS in front).
+    public required string[] CorsAllowedOrigins { get; init; }
+    public required int FaucetRatePerMinute { get; init; }
+    public required int SessionRatePerMinute { get; init; }
+    public required int GlobalRatePerMinute { get; init; }
+
     public static AppConfig Load(IConfiguration cfg)
     {
         var chain = cfg.GetSection("Venue:Chain");
@@ -66,6 +72,11 @@ public sealed class AppConfig
             SaltSecret = cfg["Venue:SaltSecret"] ?? "",
             MetadataStorePath = cfg["Venue:MetadataStorePath"] ?? "data/market-metadata.json",
             SeedMarketsEnabled = cfg.GetValue<bool?>("Venue:SeedMarketsEnabled") ?? true,
+            CorsAllowedOrigins = (cfg["Venue:Cors:AllowedOrigins"] ?? "")
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            FaucetRatePerMinute = cfg.GetValue<int?>("Venue:RateLimit:FaucetPerMinute") ?? 5,
+            SessionRatePerMinute = cfg.GetValue<int?>("Venue:RateLimit:SessionPerMinute") ?? 10,
+            GlobalRatePerMinute = cfg.GetValue<int?>("Venue:RateLimit:GlobalPerMinute") ?? 600,
             SeedMarkets = new[]
             {
                 new SeedMarket("Will Bitcoin close above $120,000 on 2026-08-15?", "Coinbase index price", 1786838340),

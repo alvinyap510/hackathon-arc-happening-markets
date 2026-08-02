@@ -1,3 +1,5 @@
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.HttpOverrides;
 using Venue;
 using Venue.Api;
 using Venue.Api.Endpoints;
@@ -83,8 +85,59 @@ builder.Services.AddHostedService(_ => new MarketSeederHostedService(core, gatew
 // Money amounts travel as decimal strings everywhere in the API.
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new BigIntegerJsonConverter()));
 
+// --- public-exposure safety (Caddy HTTPS in front) ---
+
+// Caddy is the reverse proxy: honor X-Forwarded-For so rate limits key on the REAL
+// client IP, not Caddy's. Cleared KnownProxies = the immediate peer is trusted.
+builder.Services.Configure<ForwardedHeadersOptions>(o =>
+{
+    o.ForwardedHeaders = ForwardedHeaders.XForwardedFor;
+    o.KnownNetworks.Clear();
+    o.KnownProxies.Clear();
+});
+
+// CORS: only explicitly configured origins. Empty => same-origin only (never AllowAnyOrigin).
+var corsOrigins = appCfg.CorsAllowedOrigins;
+if (corsOrigins.Length > 0)
+{
+    builder.Services.AddCors(o => o.AddPolicy("venue", p => p
+        .WithOrigins(corsOrigins)
+        .AllowAnyHeader()
+        .AllowAnyMethod()));
+}
+
+// Rate limiting: strict fixed-window policies on the abusable PUBLIC endpoints
+// (faucet, session) keyed by client IP; a lenient global limiter for everything else
+// (trading + reads stay generous). 429 on limit. Limits are config-overridable.
+builder.Services.AddRateLimiter(o =>
+{
+    o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    o.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(
+        ctx => RateLimitPartition.GetFixedWindowLimiter(ClientIp(ctx), _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = appCfg.GlobalRatePerMinute,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+        }));
+    o.AddPolicy("faucet", ctx => RateLimitPartition.GetFixedWindowLimiter(ClientIp(ctx), _ => new FixedWindowRateLimiterOptions
+    {
+        PermitLimit = appCfg.FaucetRatePerMinute,
+        Window = TimeSpan.FromMinutes(1),
+        QueueLimit = 0,
+    }));
+    o.AddPolicy("session", ctx => RateLimitPartition.GetFixedWindowLimiter(ClientIp(ctx), _ => new FixedWindowRateLimiterOptions
+    {
+        PermitLimit = appCfg.SessionRatePerMinute,
+        Window = TimeSpan.FromMinutes(1),
+        QueueLimit = 0,
+    }));
+});
+
 var app = builder.Build();
+app.UseForwardedHeaders();
 app.UseWebSockets();
+if (corsOrigins.Length > 0) app.UseCors("venue");
+app.UseRateLimiter();
 
 app.MapUserEndpoints(sessions, appCfg, circle, core, gateway, sessionProvisioner);
 app.MapTradingEndpoints(sessions, appCfg, core, gateway, marketMetadata);
@@ -103,6 +156,11 @@ app.MapGet("/ws", async (HttpContext ctx) =>
 });
 
 app.Run();
+
+/// <summary>Client IP for rate limiting: after UseForwardedHeaders, RemoteIpAddress is the
+/// real client (from Caddy's X-Forwarded-For), falling back to the direct peer.</summary>
+static string ClientIp(HttpContext ctx)
+    => ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
 /// <summary>Starts/stops the venue core's background loops (indexer, batcher, RFM crank).</summary>
 internal sealed class CoreHostedService(VenueCore core) : IHostedService
