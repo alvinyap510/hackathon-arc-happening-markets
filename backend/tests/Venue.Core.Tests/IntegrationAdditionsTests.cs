@@ -63,6 +63,45 @@ public class IntegrationAdditionsTests
         Assert.Equal("upper", store.Get(MarketHash)!.QuestionText);
     }
 
+    // --------------------------------------------------------- Circle wallet store
+
+    [Fact]
+    public void CircleWalletStore_IsDurable_ByIdAndAddress()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "cw-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            var store = new Circle.CircleWalletStore(path);
+            store.Save("alice@example.com", "wallet-123", "0xAbC123");
+
+            // A NEW instance = a process restart; both lookups survive.
+            var reloaded = new Circle.CircleWalletStore(path);
+            var byRef = reloaded.ByRef("alice@example.com");
+            Assert.NotNull(byRef);
+            Assert.Equal("wallet-123", byRef!.Id);
+            Assert.Equal("0xabc123", byRef.Address);
+            var byAddr = reloaded.ByAddress("0xABC123");
+            Assert.NotNull(byAddr);
+            Assert.Equal("wallet-123", byAddr!.Id);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void CircleWalletStore_SameRefResolvesSameWallet()
+    {
+        var store = new Circle.CircleWalletStore(Path.Combine(Path.GetTempPath(), "cw-" + Guid.NewGuid().ToString("N") + ".json"));
+        store.Save("inst@hedge.fund", "wallet-1", "0xaaa");
+        store.Save("inst@hedge.fund", "wallet-2", "0xbbb"); // re-login rebind overwrites
+        var byRef = store.ByRef("inst@hedge.fund");
+        Assert.Equal("wallet-2", byRef!.Id);
+        Assert.Null(store.ByAddress("0xaaa")); // old mapping replaced
+        Assert.Equal("0xbbb", store.ByAddress("0xbbb")!.Address);
+    }
+
     // ------------------------------------------------------------- SEAM 1 dev accounts
 
     [Fact]
