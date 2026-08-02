@@ -109,11 +109,12 @@ public sealed class NethereumChainGateway : IChainGateway
     public async Task<BatchRevertInfo?> TryGetRevertAsync(string txHash, CancellationToken ct)
         => await RecoverRevertAsync(txHash, ct);
 
-    public async Task<string?> FindPendingSettlementAsync(string batchId, CancellationToken ct)
+    public async Task<SettlementTxLookup> FindPendingSettlementAsync(string batchId, CancellationToken ct)
     {
         // The batchId is the first calldata word after the settleBatch selector
         // (settleBatch(bytes32, tuple[])). Scan the pending pool then recent blocks for an
-        // operator->exchange tx carrying it.
+        // operator->exchange tx carrying it. Any exception during the scan is INCONCLUSIVE
+        // (Unknown) — never reported as definitively-not-submitted.
         var expected = Infrastructure.Hash.NormalizeBytes32(batchId)[2..];
         Func<Transaction, bool> isOurs = tx =>
             string.Equals(tx.From, _cfg.OperatorAddress, StringComparison.OrdinalIgnoreCase)
@@ -125,22 +126,24 @@ public sealed class NethereumChainGateway : IChainGateway
         {
             var pending = await _operatorWeb3.Eth.Blocks.GetBlockWithTransactionsByNumber.SendRequestAsync(BlockParameter.CreatePending());
             var hit = pending?.Transactions?.FirstOrDefault(t => isOurs(t));
-            if (hit != null) return hit.TransactionHash;
+            if (hit != null) return new SettlementTxLookup(SettlementTxState.Submitted, hit.TransactionHash);
 
             var latest = await LatestBlockAsync(ct);
             for (var b = latest; b > latest - 25 && b > 0; b--)
             {
                 var block = await _operatorWeb3.Eth.Blocks.GetBlockWithTransactionsByNumber.SendRequestAsync(new HexBigInteger(b));
                 hit = block?.Transactions?.FirstOrDefault(t => isOurs(t));
-                if (hit != null) return hit.TransactionHash;
+                if (hit != null) return new SettlementTxLookup(SettlementTxState.Submitted, hit.TransactionHash);
             }
+
+            // Clean scan of pending + recent history found nothing -> definitively not submitted.
+            return new SettlementTxLookup(SettlementTxState.NotSubmitted, null);
         }
         catch
         {
-            // Node hiccup: report "not found" so the batcher does not unwind based on a guess;
-            // it will re-run the reconciliation on the next attempt cycle.
+            // Could not determine -> Unknown, never "not submitted".
+            return new SettlementTxLookup(SettlementTxState.Unknown, null);
         }
-        return null;
     }
 
     public async Task<SettlementReceipt> AwaitSettlementAsync(string txHash, CancellationToken ct)

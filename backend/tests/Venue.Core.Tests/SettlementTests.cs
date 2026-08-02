@@ -183,6 +183,39 @@ public class SettlementTests
     // ------------------------------------------------------------ timeout reconciliation
 
     [Fact]
+    public async Task Batcher_SubmitThrowsAndLookupUnknown_HoldsReservations_ThenReconciles()
+    {
+        var gateway = new ScriptedGateway();
+        gateway.SubmitThrows = true;
+        gateway.FindState = SettlementTxState.Unknown; // RPC error / inconclusive scan
+        gateway.PendingTx = true;
+        for (var i = 0; i < 3; i++) gateway.StatusSequence.Enqueue(TxStatus.Pending);
+        gateway.StatusSequence.Enqueue(TxStatus.Confirmed);
+
+        var coordinator = new RecordingCoordinator();
+        var batcher = new SettlementBatcher(gateway, coordinator, TestData.Operator, reconcileIntervalMs: 10);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var run = Task.Run(() => batcher.RunAsync(cts.Token));
+        for (var i = 0; i < 2; i++) batcher.Enqueue(Match(i));
+
+        // Inconclusive lookup: the batch is deferred, reservations HELD — nothing unwound, nothing confirmed.
+        await WaitUntilAsync(() => batcher.DeferredCount == 1, TimeSpan.FromSeconds(5));
+        Assert.Equal(0, coordinator.CancelledAll.Count);
+        Assert.Equal(0, coordinator.Confirmed.Count);
+
+        // The lookup later resolves to Submitted and the tx mines: the deferred batch reconciles
+        // to a confirmation — still never unwound.
+        gateway.FindState = SettlementTxState.Submitted;
+        await WaitUntilAsync(() => coordinator.Confirmed.Count == 1, TimeSpan.FromSeconds(8));
+        cts.Cancel();
+        try { await run; } catch (OperationCanceledException) { /* expected */ }
+
+        Assert.Single(coordinator.Confirmed);
+        Assert.Empty(coordinator.CancelledAll); // reservations were never released
+        Assert.Equal(0, batcher.DeferredCount);
+    }
+
+    [Fact]
     public async Task Batcher_SubmitThrowsButTxLaterMines_NoDoubleExecute()
     {
         var gateway = new ScriptedGateway();
@@ -405,10 +438,17 @@ public class SettlementTests
             return Task.FromResult(hash);
         }
 
-        public Task<string?> FindPendingSettlementAsync(string batchId, CancellationToken ct)
-            => Task.FromResult(BatchTx.TryGetValue(Hash.NormalizeBytes32(batchId), out var h) ? h : null);
+        public Task<SettlementTxLookup> FindPendingSettlementAsync(string batchId, CancellationToken ct)
+        {
+            if (FindState == SettlementTxState.Unknown) return Task.FromResult(new SettlementTxLookup(SettlementTxState.Unknown, null));
+            if (FindState == SettlementTxState.NotSubmitted) return Task.FromResult(new SettlementTxLookup(SettlementTxState.NotSubmitted, null));
+            return Task.FromResult(BatchTx.TryGetValue(Hash.NormalizeBytes32(batchId), out var h)
+                ? new SettlementTxLookup(SettlementTxState.Submitted, h)
+                : new SettlementTxLookup(SettlementTxState.NotSubmitted, null));
+        }
 
         public bool SubmitThrows { get; set; }
+        public SettlementTxState FindState { get; set; } = SettlementTxState.Submitted;
         public Dictionary<string, string> BatchTx { get; } = new();
 
         public Task<SettlementReceipt> AwaitSettlementAsync(string txHash, CancellationToken ct)

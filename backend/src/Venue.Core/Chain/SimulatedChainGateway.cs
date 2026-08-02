@@ -61,10 +61,12 @@ public sealed class SimulatedChainGateway : IChainGateway
         return txHash;
     }
 
-    public async Task<string?> FindPendingSettlementAsync(string batchId, CancellationToken ct)
+    public async Task<SettlementTxLookup> FindPendingSettlementAsync(string batchId, CancellationToken ct)
     {
         lock (_sync)
-            return _batchTx.TryGetValue(Infrastructure.Hash.NormalizeBytes32(batchId), out var tx) ? tx : null;
+            return _batchTx.TryGetValue(Infrastructure.Hash.NormalizeBytes32(batchId), out var tx)
+                ? new SettlementTxLookup(SettlementTxState.Submitted, tx)
+                : new SettlementTxLookup(SettlementTxState.NotSubmitted, null); // never lost in the sim
     }
 
     public async Task<SettlementReceipt> AwaitSettlementAsync(string txHash, CancellationToken ct)

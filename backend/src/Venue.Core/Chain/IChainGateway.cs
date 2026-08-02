@@ -16,6 +16,19 @@ public enum TxStatus
 /// <summary>Settlement receipt: the on-chain outcome of one whole-batch settleBatch.</summary>
 public sealed record SettlementReceipt(TxStatus Status, Settlement.BatchRevertInfo? Revert);
 
+/// <summary>Tri-state result of locating a possibly-accepted settlement tx by batchId.</summary>
+public enum SettlementTxState
+{
+    /// <summary>The tx was found (pending or mined) — reconcile it.</summary>
+    Submitted,
+    /// <summary>Definitively NOT submitted (clean scan of pending + recent blocks found nothing).</summary>
+    NotSubmitted,
+    /// <summary>Inconclusive (RPC error / partial scan) — the tx may still be out there; keep reservations HELD.</summary>
+    Unknown,
+}
+
+public sealed record SettlementTxLookup(SettlementTxState State, string? TxHash);
+
 /// <summary>Contract addresses + chain parameters (no secrets: keys come from env at host time).</summary>
 public sealed record ChainConfig(
     string RpcUrl,
@@ -62,11 +75,12 @@ public interface IChainGateway
 
     /// <summary>
     /// Locate a settlement tx for a batchId when the submission call threw before returning a
-    /// hash (the RPC may have ACCEPTED the tx and only the response was lost). Returns the tx
-    /// hash if a pending or recently-mined operator→exchange settleBatch tx with this batchId
-    /// exists, else null (provably not submitted).
+    /// hash (the RPC may have ACCEPTED the tx and only the response was lost). Tri-state: a
+    /// found tx is Submitted; a clean scan that finds nothing is NotSubmitted; an RPC error or
+    /// inconclusive scan is Unknown — callers must treat Unknown as possibly-submitted and keep
+    /// reservations held (never unwind on Unknown).
     /// </summary>
-    Task<string?> FindPendingSettlementAsync(string batchId, CancellationToken ct);
+    Task<SettlementTxLookup> FindPendingSettlementAsync(string batchId, CancellationToken ct);
 
     Task<string> SubmitFinalizeAsync(BigInteger requestId, CancellationToken ct);
     Task<string> SubmitResolveAsync(string marketId, Outcome outcome, CancellationToken ct);

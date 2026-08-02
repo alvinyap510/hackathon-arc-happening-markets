@@ -106,8 +106,7 @@ public class RfmCoordinatorTests
         public Task<SettlementReceipt> AwaitSettlementAsync(string txHash, CancellationToken ct) => throw new NotImplementedException();
         public Task<bool> IsTransactionPendingAsync(string txHash, CancellationToken ct) => throw new NotImplementedException();
         public Task<BatchRevertInfo?> TryGetRevertAsync(string txHash, CancellationToken ct) => throw new NotImplementedException();
-        public Task<string?> FindPendingSettlementAsync(string batchId, CancellationToken ct) => throw new NotImplementedException();
-        public Task<string> SubmitFinalizeAsync(BigInteger requestId, CancellationToken ct)
+        public Task<SettlementTxLookup> FindPendingSettlementAsync(string batchId, CancellationToken ct) => throw new NotImplementedException();        public Task<string> SubmitFinalizeAsync(BigInteger requestId, CancellationToken ct)
         {
             Finalized.Add(requestId);
             return Task.FromResult("0xfin");

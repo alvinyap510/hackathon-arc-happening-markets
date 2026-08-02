@@ -30,6 +30,8 @@ public sealed class SettlementBatcher
     private readonly string _operatorAddress;
     private readonly ConcurrentQueue<MatchedTrade> _queue = new();
     private readonly SemaphoreSlim _signal = new(0, int.MaxValue);
+    private readonly object _deferredLock = new();
+    private readonly List<(string BatchId, List<MatchedTrade> Matches)> _deferred = new();
     private long _batchAttempt;
     private int _busy; // 1 while a batch is submitted/awaiting; read by AwaitIdleAsync
 
@@ -42,6 +44,12 @@ public sealed class SettlementBatcher
     }
 
     public int PendingCount => _queue.Count;
+
+    /// <summary>Batches whose submission lookup is inconclusive — reservations HELD, never unwound.</summary>
+    public int DeferredCount
+    {
+        get { lock (_deferredLock) return _deferred.Count; }
+    }
 
     public void Enqueue(MatchedTrade match)
     {
@@ -90,6 +98,7 @@ public sealed class SettlementBatcher
             List<MatchedTrade> batch;
             try
             {
+                await ReconcileDeferredAsync(ct); // resolve unknown-lookup batches before new work
                 batch = await DrainAsync(ct);
                 if (batch.Count > 0) await SubmitWithRepairAsync(batch, ct);
             }
@@ -149,15 +158,29 @@ public sealed class SettlementBatcher
             }
             catch (Exception ex)
             {
-                // The RPC may have ACCEPTED the tx and lost only the response, so the tx can
-                // still mine. Locate it by batchId and reconcile through the normal timeout path —
-                // NEVER unwind on a submission exception. Only unwind if provably not submitted.
-                var located = await _gateway.FindPendingSettlementAsync(batchId, ct);
-                txHash = located;
-                outcome = located != null
-                    ? await ReconcileAsync(located, ct)
-                    : new SettlementReceipt(TxStatus.Unknown, null);
-                System.Console.WriteLine($"settle: submit raised {ex.Message}; tx located={located != null}");
+                // The RPC may have ACCEPTED the tx and lost only the response. Locate it — but a
+                // lookup can be INCONCLUSIVE (RPC error / partial scan): only a DEFINITIVE
+                // NotSubmitted lets us unwind. Unknown keeps the batch deferred and its
+                // reservations HELD until the lookup resolves — never release on a guess.
+                var lookup = await _gateway.FindPendingSettlementAsync(batchId, ct);
+                switch (lookup.State)
+                {
+                    case SettlementTxState.Submitted:
+                        txHash = lookup.TxHash;
+                        outcome = await ReconcileAsync(lookup.TxHash!, ct);
+                        break;
+                    case SettlementTxState.NotSubmitted:
+                        // definitively not submitted -> safe to unwind
+                        txHash = null;
+                        outcome = new SettlementReceipt(TxStatus.Unknown, null);
+                        break;
+                    default:
+                        // Unknown: could not determine -> keep the tx tracked, reservations held,
+                        // retry the lookup on later loop iterations. NEVER unwind.
+                        Console.WriteLine($"settle: submit raised {ex.Message}; lookup inconclusive -> deferred");
+                        lock (_deferredLock) _deferred.Add((batchId, remaining.ToList()));
+                        return;
+                }
             }
 
             if (outcome.Status == TxStatus.Confirmed)
@@ -222,6 +245,56 @@ public sealed class SettlementBatcher
                 return new SettlementReceipt(TxStatus.Unknown, null);
             }
             // still pending: it could still mine -> keep waiting, keep the reservations held
+        }
+    }
+
+    /// <summary>
+    /// Retry the lookup for batches whose submission outcome is Unknown (inconclusive). Only a
+    /// DEFINITIVE result acts: Submitted → reconcile to confirmation/revert; NotSubmitted →
+    /// unwind. Unknown stays deferred with reservations held. Matches whose market closed while
+    /// deferred are unwound by the resolution seal.
+    /// </summary>
+    private async Task ReconcileDeferredAsync(CancellationToken ct)
+    {
+        List<(string BatchId, List<MatchedTrade> Matches)> snapshot;
+        lock (_deferredLock) snapshot = _deferred.ToList();
+
+        foreach (var (batchId, matches) in snapshot)
+        {
+            var open = (await _core.UnwindClosedAsync(matches)).ToList(); // resolution seal
+            if (open.Count == 0)
+            {
+                lock (_deferredLock) _deferred.RemoveAll(d => d.BatchId == batchId);
+                continue;
+            }
+
+            var lookup = await _gateway.FindPendingSettlementAsync(batchId, ct);
+            switch (lookup.State)
+            {
+                case SettlementTxState.Submitted:
+                {
+                    var outcome = await ReconcileAsync(lookup.TxHash!, ct);
+                    if (outcome.Status == TxStatus.Confirmed)
+                        await _core.ConfirmBatchAsync(batchId, open);
+                    else if (outcome.Status == TxStatus.Reverted)
+                    {
+                        // nothing consumed on revert: re-queue for a fresh attempt
+                        foreach (var m in open) { _queue.Enqueue(m); _signal.Release(); }
+                    }
+                    else
+                    {
+                        await _core.CancelAllOrdersAsync(open, "dropped_after_deferral");
+                    }
+                    lock (_deferredLock) _deferred.RemoveAll(d => d.BatchId == batchId);
+                    break;
+                }
+                case SettlementTxState.NotSubmitted:
+                    await _core.CancelAllOrdersAsync(open, "not_submitted_after_deferral");
+                    lock (_deferredLock) _deferred.RemoveAll(d => d.BatchId == batchId);
+                    break;
+                default:
+                    break; // Unknown: keep deferred, reservations held
+            }
         }
     }
 }
