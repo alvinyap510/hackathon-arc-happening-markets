@@ -116,6 +116,7 @@ export interface RfmRequest {
   commitDeadline: string;
   revealDeadline: string;
   commitCount: number;
+  bornMarketId?: MarketId;
 }
 
 export interface RfmReveal {

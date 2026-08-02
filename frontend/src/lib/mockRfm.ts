@@ -24,10 +24,9 @@ export interface RfmRuntime {
   timers: ReturnType<typeof setTimeout>[];
 }
 
-let reqSeq = 0;
-
 export class RfmManager {
   runtimes = new Map<RequestId, RfmRuntime>();
+  private reqSeq = 0;
 
   constructor(private venue: MockVenue) {}
 
@@ -42,7 +41,7 @@ export class RfmManager {
   /** Launch a fully scripted auction. startOffsetMs<0 means "already running" (pre-staged). */
   launch(req: NewRfmRequest, elapsedMs = 0): RfmRuntime {
     const now = Date.now();
-    const requestId = `req-${(++reqSeq).toString().padStart(3, "0")}`;
+    const requestId = `req-${(++this.reqSeq).toString().padStart(3, "0")}`;
     const commitEnds = now - elapsedMs + MOCK_COMMIT_MS;
     const revealEnds = commitEnds + MOCK_REVEAL_MS;
     const escrow = ((BigInt(req.quantity) * BigInt(req.maxPriceTick)) / 1000n).toString();
@@ -177,6 +176,7 @@ export class RfmManager {
           lastTradeTick: null,
         });
         rt.bornMarketId = market.marketId;
+        rt.request.bornMarketId = market.marketId;
         this.venue.emit(ch, { kind: "born", marketId: market.marketId });
       }, 1500),
     );

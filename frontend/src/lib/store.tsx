@@ -158,7 +158,7 @@ export function useRfm(requestId: string | null): RfmState {
   useChannel(requestId ? `rfm:${requestId}` : null, (ev) => {
     if (ev.kind === "snapshot") {
       const d = ev.data as RfmState;
-      setState(d);
+      setState(d ? { ...d, reveals: [...(d.reveals ?? [])] } : d);
       return;
     }
     const d = ev.data as

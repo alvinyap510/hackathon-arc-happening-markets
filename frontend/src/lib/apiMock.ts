@@ -61,8 +61,15 @@ export class MockApi implements VenueApi {
         lastTradeTick: s.mid + 12,
       });
     }
-    // pre-staged auction, already 60% through its commit window, so the RFM tab
-    // is live on first paint (mirrors the on-stage choreography in the spec)
+    this.venue.start();
+  }
+
+  // The pre-staged auction launches lazily on first RFM-tab visit, so it is
+  // always mid-commit when the user arrives (mirrors the on-stage choreography).
+  private staged = false;
+  private ensureStaged(): void {
+    if (this.staged) return;
+    this.staged = true;
     this.rfm.launch(
       {
         questionText: "Will the Fed cut rates at the September 2026 FOMC meeting?",
@@ -73,9 +80,8 @@ export class MockApi implements VenueApi {
         minMatch: "500000000",
         maxPriceTick: 620,
       },
-      12_000,
+      0,
     );
-    this.venue.start();
   }
 
   async login(email: string): Promise<Session> {
@@ -128,6 +134,7 @@ export class MockApi implements VenueApi {
   }
 
   async listRfmRequests(): Promise<RfmRequest[]> {
+    this.ensureStaged();
     return this.rfm.list();
   }
 
@@ -172,10 +179,17 @@ export class MockApi implements VenueApi {
         const m = this.venue.markets.find((x) => x.marketId === id);
         return m ? this.venue.bookOf(m) : null;
       }
-      if (kind === "trades") return this.venue.markets.find((x) => x.marketId === id)?.trades ?? [];
+      if (kind === "trades") {
+        const m = this.venue.markets.find((x) => x.marketId === id);
+        return m ? [...m.trades] : [];
+      }
       if (kind === "rfm") {
         const rt: RfmRuntime | undefined = this.rfm.get(id);
-        return rt ? { request: rt.request, reveals: rt.reveals, final: rt.final, bornMarketId: rt.bornMarketId } : null;
+        // copy everything: the runtime keeps mutating these objects, and React
+        // state must never share a live reference with the simulation
+        return rt
+          ? { request: { ...rt.request }, reveals: [...rt.reveals], final: rt.final, bornMarketId: rt.bornMarketId }
+          : null;
       }
       if (kind === "user") return { balances: this.venue.balances() };
       return null;

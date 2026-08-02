@@ -51,11 +51,13 @@ export interface VenueApi {
 export const API_MODE: "mock" | "real" =
   (import.meta.env.VITE_API_MODE ?? "mock") === "real" ? "real" : "mock";
 
-export async function createApi(): Promise<VenueApi> {
-  if (API_MODE === "real") {
-    const { RealApi } = await import("./apiReal");
-    return new RealApi();
-  }
-  const { MockApi } = await import("./apiMock");
-  return new MockApi();
+let apiPromise: Promise<VenueApi> | null = null;
+
+export function createApi(): Promise<VenueApi> {
+  // singleton: StrictMode double-mount must not spin up two mock venues
+  apiPromise ??=
+    API_MODE === "real"
+      ? import("./apiReal").then((m) => new m.RealApi())
+      : import("./apiMock").then((m) => new m.MockApi());
+  return apiPromise;
 }

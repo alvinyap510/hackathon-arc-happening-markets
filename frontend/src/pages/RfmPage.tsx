@@ -60,7 +60,9 @@ export default function RfmPage({ onOpenMarket }: { onOpenMarket: (id: string) =
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-semibold text-paper-200">{r.questionText.slice(0, 42)}{r.questionText.length > 42 ? "…" : ""}</span>
-                      <span className={`num text-[10px] font-bold uppercase ${PHASE_TONE[r.phase]}`}>{r.phase}</span>
+                      <span className={`num text-[10px] font-bold uppercase ${PHASE_TONE[r.phase]}`}>
+                        {r.bornMarketId ? "BORN" : r.phase}
+                      </span>
                     </div>
                     <div className="num mt-1 text-[10px] text-ink-400">
                       buy {r.side} · {formatUsdc(r.quantity, 0)} @ ≤ {r.maxPriceTick / 10}%

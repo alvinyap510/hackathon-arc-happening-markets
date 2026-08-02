@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useStore } from "../lib/store";
 import { formatUsdc, shortAddr } from "../lib/format";
 
@@ -21,13 +21,9 @@ export default function Layout({
 }) {
   const { session, balances, bornPulse, wallet } = useStore();
   const [ping, setPing] = useState(false);
-  const first = useRef(true);
 
   useEffect(() => {
-    if (first.current) {
-      first.current = false;
-      return;
-    }
+    if (bornPulse === 0) return;
     setPing(true);
     const t = setTimeout(() => setPing(false), 3600);
     return () => clearTimeout(t);
