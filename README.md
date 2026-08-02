@@ -41,6 +41,20 @@ Arc is Circle's stablecoin-native chain, where USDC is the gas token. We use:
 
 Trading and collateral are denominated in USDC end to end.
 
+## Deployed on Arc testnet
+
+Chain ID `5042002` · RPC `https://rpc.testnet.arc.io` · explorer [`testnet.arcscan.app`](https://testnet.arcscan.app). Current testnet deployment (addresses are updated on each redeploy):
+
+| Contract | Address |
+|---|---|
+| MockUSDC (collateral, 6-dec) | `0xE0685ecACd0CB011377Ecb65001995eEA10b9308` |
+| OutcomeTokens | `0xE4E3EaBA1C944B8B17be1DE9f4a6BAD211Dd195C` |
+| Vault | `0xAcfa83e4A9A147DfA5b6F4Bf8478192D4a82Eeed` |
+| CTFExchangeLite | `0x353103Bda8f72411C91DAeb2962b2ffE31299b06` |
+| RFM | `0x5FFf6dC4Dc4B0e164ad86144cA3E25C0E6867d72` |
+
+Roles are wired once at deploy and frozen (Vault, OutcomeTokens, and RFM reference each other; the operator settles and resolves). Collateral is the MockUSDC above; production points the same `USDC_ADDRESS` parameter at the Arc system USDC face `0x3600...0000` with no contract change.
+
 ## Status
 
 Early build for the Arc Programmable Money hackathon. Architecture is specified and audited; implementation is in progress. This is a scoped, from-scratch build, not a fork of any production system.
