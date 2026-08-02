@@ -249,10 +249,12 @@ public sealed class SettlementBatcher
     }
 
     /// <summary>
-    /// Retry the lookup for batches whose submission outcome is Unknown (inconclusive). Only a
-    /// DEFINITIVE result acts: Submitted → reconcile to confirmation/revert; NotSubmitted →
-    /// unwind. Unknown stays deferred with reservations held. Matches whose market closed while
-    /// deferred are unwound by the resolution seal.
+    /// Retry the lookup for batches whose submission outcome is Unknown (inconclusive). The tx is
+    /// resolved to a DEFINITIVE terminal state FIRST — an Unknown (possibly-mining) tx is NEVER
+    /// released, not even when its market closes/resolves. Only a terminally-not-mined tx
+    /// (reverted / provably dropped / NotSubmitted) may be unwound; a mined one is confirmed.
+    /// Closing a market cancels RESTING orders, but an already-submitted Unknown settlement tx is
+    /// resolved to terminal before its reservations can ever be released.
     /// </summary>
     private async Task ReconcileDeferredAsync(CancellationToken ct)
     {
@@ -261,13 +263,6 @@ public sealed class SettlementBatcher
 
         foreach (var (batchId, matches) in snapshot)
         {
-            var open = (await _core.UnwindClosedAsync(matches)).ToList(); // resolution seal
-            if (open.Count == 0)
-            {
-                lock (_deferredLock) _deferred.RemoveAll(d => d.BatchId == batchId);
-                continue;
-            }
-
             var lookup = await _gateway.FindPendingSettlementAsync(batchId, ct);
             switch (lookup.State)
             {
@@ -275,25 +270,26 @@ public sealed class SettlementBatcher
                 {
                     var outcome = await ReconcileAsync(lookup.TxHash!, ct);
                     if (outcome.Status == TxStatus.Confirmed)
-                        await _core.ConfirmBatchAsync(batchId, open);
+                        await _core.ConfirmBatchAsync(batchId, matches); // mined -> settle it
                     else if (outcome.Status == TxStatus.Reverted)
                     {
-                        // nothing consumed on revert: re-queue for a fresh attempt
-                        foreach (var m in open) { _queue.Enqueue(m); _signal.Release(); }
+                        // definitively not-mined (reverted, nothing consumed): re-queue for a fresh
+                        // attempt; the next submit's seal unwinds any closed-market matches.
+                        foreach (var m in matches) { _queue.Enqueue(m); _signal.Release(); }
                     }
                     else
                     {
-                        await _core.CancelAllOrdersAsync(open, "dropped_after_deferral");
+                        await _core.CancelAllOrdersAsync(matches, "dropped_after_deferral"); // provably dropped
                     }
                     lock (_deferredLock) _deferred.RemoveAll(d => d.BatchId == batchId);
                     break;
                 }
                 case SettlementTxState.NotSubmitted:
-                    await _core.CancelAllOrdersAsync(open, "not_submitted_after_deferral");
+                    await _core.CancelAllOrdersAsync(matches, "not_submitted_after_deferral"); // definitively not submitted
                     lock (_deferredLock) _deferred.RemoveAll(d => d.BatchId == batchId);
                     break;
                 default:
-                    break; // Unknown: keep deferred, reservations held
+                    break; // Unknown: the tx may still mine -> keep deferred, reservations HELD, never unwound on closure
             }
         }
     }

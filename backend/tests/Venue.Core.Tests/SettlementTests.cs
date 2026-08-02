@@ -216,6 +216,47 @@ public class SettlementTests
     }
 
     [Fact]
+    public async Task Batcher_DeferredUnknownTx_MarketCloses_ReservationsHeldUntilTerminal()
+    {
+        var gateway = new ScriptedGateway();
+        gateway.SubmitThrows = true;
+        gateway.FindState = SettlementTxState.Unknown; // inconclusive lookup, tx possibly-mining
+        gateway.PendingTx = true;
+        for (var i = 0; i < 3; i++) gateway.StatusSequence.Enqueue(TxStatus.Pending);
+        gateway.StatusSequence.Enqueue(TxStatus.Confirmed);
+
+        var coordinator = new RecordingCoordinator(); // market OPEN during submit
+        var batcher = new SettlementBatcher(gateway, coordinator, TestData.Operator, reconcileIntervalMs: 10);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var run = Task.Run(() => batcher.RunAsync(cts.Token));
+        for (var i = 0; i < 2; i++) batcher.Enqueue(Match(i));
+
+        // Submit throws, lookup Unknown -> the batch is deferred with reservations HELD.
+        await WaitUntilAsync(() => batcher.DeferredCount == 1, TimeSpan.FromSeconds(5));
+        var unwoundBefore = coordinator.Unwound.Count; // the normal submit-path seal (market open)
+
+        // The market CLOSES while the tx is still Unknown. Closure must NOT release the
+        // deferred tx's reservations: no closure-unwind on the deferred batch, no unwind/confirm,
+        // and the deferred record stays until the tx is reconciled to a terminal state.
+        coordinator.CloseAllOnUnwind = true;
+        await Task.Delay(300);
+        Assert.Equal(1, batcher.DeferredCount);
+        Assert.Equal(unwoundBefore, coordinator.Unwound.Count); // no closure-unwind of the deferred batch
+        Assert.Equal(0, coordinator.CancelledAll.Count);
+        Assert.Equal(0, coordinator.Confirmed.Count);
+
+        // Lookup resolves to Submitted and the tx mines: settled then, never released early.
+        gateway.FindState = SettlementTxState.Submitted;
+        await WaitUntilAsync(() => coordinator.Confirmed.Count == 1, TimeSpan.FromSeconds(8));
+        cts.Cancel();
+        try { await run; } catch (OperationCanceledException) { /* expected */ }
+
+        Assert.Single(coordinator.Confirmed);
+        Assert.Empty(coordinator.CancelledAll);
+        Assert.Equal(0, batcher.DeferredCount);
+    }
+
+    [Fact]
     public async Task Batcher_SubmitThrowsButTxLaterMines_NoDoubleExecute()
     {
         var gateway = new ScriptedGateway();
@@ -508,9 +549,10 @@ public class SettlementTests
         public Task<IReadOnlyList<MatchedTrade>> UnwindClosedAsync(IReadOnlyList<MatchedTrade> matches)
         {
             Unwound.Add(matches);
-            return Task.FromResult(matches);
+            return Task.FromResult<IReadOnlyList<MatchedTrade>>(CloseAllOnUnwind ? Array.Empty<MatchedTrade>() : matches);
         }
 
+        public bool CloseAllOnUnwind { get; set; }
         public List<IReadOnlyList<MatchedTrade>> Unwound { get; } = new();
     }
 }
