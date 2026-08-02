@@ -19,7 +19,7 @@ public sealed class CircleChainGateway : IChainGateway, ISessionProvisioner
     private readonly NethereumChainGateway _rpc;
     private readonly CircleW3sClient _circle;
     private readonly CircleWalletStore _wallets;
-    private long _txSeq;
+
 
     public bool Simulated => false;
 
@@ -59,10 +59,14 @@ public sealed class CircleChainGateway : IChainGateway, ISessionProvisioner
     public Task<string> SubmitResolveAsync(string marketId, Outcome outcome, CancellationToken ct) => _rpc.SubmitResolveAsync(marketId, outcome, ct);
     public Task SubmitCreateMarketAsync(string marketId, byte[] meta, CancellationToken ct) => _rpc.SubmitCreateMarketAsync(marketId, meta, ct);
     public Task<BigInteger> GetRequestCountAsync(CancellationToken ct) => _rpc.GetRequestCountAsync(ct);
-    public Task<string> SubmitMintUsdcAsync(string user, BigInteger amt, CancellationToken ct) => _rpc.SubmitMintUsdcAsync(user, amt, ct);
     public Task<BigInteger> GetUsdcWalletBalanceAsync(string user, CancellationToken ct) => _rpc.GetUsdcWalletBalanceAsync(user, ct);
     public Task<TxStatus> TxStatusAsync(string txHash, CancellationToken ct) => _rpc.TxStatusAsync(txHash, ct);
     public Task FundGasAsync(string address, CancellationToken ct) => Task.CompletedTask; // Gas Station sponsors SCA fees
+
+    /// <summary>Faucet in circle mode: the SCA itself mints MockUSDC to itself (the mock's
+    /// mint is permissionless) as a GASLESS contract execution - no operator key needed.</summary>
+    public Task<string> SubmitMintUsdcAsync(string user, BigInteger amt, CancellationToken ct)
+        => SubmitTx(WalletFor(user), _cfg.NormalizedUsdc, "mint(address,uint256)", new[] { user, amt.ToString() }, ct);
 
     // ----------------------------------------------------- user ops via Circle SCA
 
@@ -114,7 +118,8 @@ public sealed class CircleChainGateway : IChainGateway, ISessionProvisioner
 
     private async Task<string> SubmitTx(CircleWalletInfo wallet, string contract, string signature, string[] args, CancellationToken ct)
     {
-        var idem = $"tx-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}-{Interlocked.Increment(ref _txSeq)}";
+        // Circle requires a UUID idempotency key (exactly-once execution).
+        var idem = Guid.NewGuid().ToString("D");
         var circleTxId = await _circle.SubmitContractExecutionAsync(wallet.Id, contract, signature, args, idem, ct);
         var deadline = DateTimeOffset.UtcNow.AddSeconds(90);
         while (DateTimeOffset.UtcNow < deadline)
@@ -126,7 +131,7 @@ public sealed class CircleChainGateway : IChainGateway, ISessionProvisioner
                     throw new InvalidOperationException($"Circle tx {circleTxId} COMPLETE without an on-chain hash");
                 return info.TransactionHash;
             }
-            if (info.State is "FAILED" or "CANCELED" or "CANCELLED")
+            if (info.State is "FAILED" or "DENIED" or "CANCELED" or "CANCELLED")
                 throw new InvalidOperationException($"Circle tx {circleTxId} {info.State}: {info.Error}");
             await Task.Delay(2000, ct);
         }

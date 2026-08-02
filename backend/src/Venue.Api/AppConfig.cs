@@ -24,6 +24,7 @@ public sealed class AppConfig
     public required string SaltSecret { get; init; }
     public required string MetadataStorePath { get; init; }
     public required IReadOnlyList<SeedMarket> SeedMarkets { get; init; }
+    public required bool SeedMarketsEnabled { get; init; }
 
     public static AppConfig Load(IConfiguration cfg)
     {
@@ -64,6 +65,7 @@ public sealed class AppConfig
             RevealSeconds = cfg.GetValue<int?>("Venue:RfmWindows:RevealSeconds") ?? 60,
             SaltSecret = cfg["Venue:SaltSecret"] ?? "",
             MetadataStorePath = cfg["Venue:MetadataStorePath"] ?? "data/market-metadata.json",
+            SeedMarketsEnabled = cfg.GetValue<bool?>("Venue:SeedMarketsEnabled") ?? true,
             SeedMarkets = new[]
             {
                 new SeedMarket("Will Bitcoin close above $120,000 on 2026-08-15?", "Coinbase index price", 1786838340),

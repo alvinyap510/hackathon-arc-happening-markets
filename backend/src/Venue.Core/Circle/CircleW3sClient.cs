@@ -31,15 +31,19 @@ public sealed class CircleW3sClient
         _entitySecret = entitySecret;
         _walletSetId = walletSetId;
         _baseUrl = baseUrl.TrimEnd('/');
-        _http = new HttpClient { BaseAddress = new Uri(_baseUrl) };
+        _http = new HttpClient();
         _http.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
     }
+
+    /// <summary>Absolute URL helper - a leading-slash relative path on a BaseAddress would
+    /// REPLACE the base path (dropping /v1), so URLs are built explicitly.</summary>
+    private Uri U(string path) => new($"{_baseUrl}/{path}");
 
     /// <summary>Fetch + cache the entity public key (PEM).</summary>
     public async Task<string> GetEntityPublicKeyAsync(CancellationToken ct)
     {
         lock (_pkLock) { if (_entityPublicKeyPem != null) return _entityPublicKeyPem; }
-        var resp = await _http.GetAsync("/w3s/config/entity/publicKey", ct);
+        var resp = await _http.GetAsync(U("w3s/config/entity/publicKey"), ct);
         resp.EnsureSuccessStatusCode();
         var env = await ReadEnvelopeAsync<PublicKeyEnvelope>(resp, ct);
         var pem = env?.Data?.PublicKey;
@@ -48,43 +52,65 @@ public sealed class CircleW3sClient
         return pem;
     }
 
-    /// <summary>Fresh RSA-OAEP(SHA-256) ciphertext of the entity secret, base64.</summary>
+    /// <summary>Fresh RSA-OAEP(SHA-256) ciphertext of the entity secret, base64. The secret
+    /// is Circle's 32-byte hex string - the DECODED bytes are what must be encrypted (verified
+    /// against the live API).</summary>
     public async Task<string> EncryptEntitySecretAsync(CancellationToken ct)
     {
         var pem = await GetEntityPublicKeyAsync(ct);
         using var rsa = RSA.Create();
         rsa.ImportFromPem(pem);
-        var cipher = rsa.Encrypt(Encoding.UTF8.GetBytes(_entitySecret), RSAEncryptionPadding.OaepSHA256);
+        var cipher = rsa.Encrypt(EntitySecretBytes(), RSAEncryptionPadding.OaepSHA256);
         return Convert.ToBase64String(cipher);
     }
 
-    /// <summary>Create/bind ONE dev-controlled SCA per user ref (idempotencyKey = bind-&lt;ref&gt;
-    /// so Circle dedupes re-login; the backend store caches the mapping).</summary>
+    private byte[] EntitySecretBytes()
+    {
+        var s = _entitySecret.Trim();
+        if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) s = s[2..];
+        var isHex = s.Length % 2 == 0 && s.All(Uri.IsHexDigit);
+        return isHex ? Convert.FromHexString(s) : Encoding.UTF8.GetBytes(_entitySecret);
+    }
+
+    /// <summary>Create/bind ONE dev-controlled SCA per user ref (idempotencyKey = UUID;
+    /// Circle dedupes by it, and the backend store caches the mapping). Verified live:
+    /// the create route is /w3s/developer/wallets with blockchains = ["ARC-TESTNET"].</summary>
     public async Task<CircleWalletInfo> BindWalletAsync(string userRef, CancellationToken ct)
     {
         var cipher = await EncryptEntitySecretAsync(ct);
-        var resp = await _http.PostAsJsonAsync("/w3s/wallets", new
+        var resp = await _http.PostAsJsonAsync(U("w3s/developer/wallets"), new
         {
-            idempotencyKey = "bind-" + userRef,
+            idempotencyKey = DeterministicUuid("bind-" + userRef),
             entitySecretCiphertext = cipher,
-            blockchain = "ARC",
+            blockchains = new[] { "ARC-TESTNET" },
             accountType = "SCA",
             walletSetId = _walletSetId,
         }, ct);
         var env = await ReadEnvelopeAsync<WalletsEnvelope>(resp, ct);
-        var wallet = env?.Data?.FirstOrDefault()?.Wallet;
+        var wallet = env?.Data?.Wallets?.FirstOrDefault();
         if (wallet == null || string.IsNullOrEmpty(wallet.Id) || string.IsNullOrEmpty(wallet.Address))
             throw new InvalidOperationException("Circle wallet create did not return an SCA");
         return new CircleWalletInfo(wallet.Id, wallet.Address);
     }
 
-    /// <summary>Gasless contract-execution transaction (Gas Station: feeLevel GAS_LESS).
-    /// Returns the Circle transaction id for status polling.</summary>
+    /// <summary>Deterministic v5 UUID from a string (stable per user ref -> idempotent re-login).</summary>
+    private static string DeterministicUuid(string seed)
+    {
+        var hash = System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(seed));
+        hash[6] = (byte)((hash[6] & 0x0f) | 0x50); // version 5
+        hash[8] = (byte)((hash[8] & 0x3f) | 0x80); // RFC 4122 variant
+        var hex = Convert.ToHexStringLower(hash.AsSpan(0, 16));
+        return $"{hex[..8]}-{hex[8..12]}-{hex[12..16]}-{hex[16..20]}-{hex[20..]}";
+    }
+
+    /// <summary>Contract-execution transaction from an SCA. On Arc testnet a preconfigured
+    /// Gas Station policy auto-sponsors SCA gas, so feeLevel LOW is sufficient (no GAS_LESS
+    /// enum). Returns the Circle transaction id for status polling.</summary>
     public async Task<string> SubmitContractExecutionAsync(string walletId, string contractAddress,
         string abiFunctionSignature, IReadOnlyList<string> abiParameters, string idempotencyKey, CancellationToken ct)
     {
         var cipher = await EncryptEntitySecretAsync(ct);
-        var resp = await _http.PostAsJsonAsync("/w3s/transactions", new
+        var resp = await _http.PostAsJsonAsync(U("w3s/developer/transactions/contractExecution"), new
         {
             idempotencyKey,
             entitySecretCiphertext = cipher,
@@ -92,7 +118,7 @@ public sealed class CircleW3sClient
             contractAddress,
             abiFunctionSignature,
             abiParameters = abiParameters.ToArray(),
-            feeLevel = "GAS_LESS",
+            feeLevel = "LOW",
         }, ct);
         var env = await ReadEnvelopeAsync<TxEnvelope>(resp, ct);
         var id = env?.Data?.Id;
@@ -102,11 +128,13 @@ public sealed class CircleW3sClient
 
     public async Task<CircleTxInfo> GetTransactionAsync(string txId, CancellationToken ct)
     {
-        var resp = await _http.GetAsync($"/w3s/transactions/{txId}", ct);
+        var resp = await _http.GetAsync(U($"w3s/transactions/{txId}"), ct);
         var env = await ReadEnvelopeAsync<TxEnvelope>(resp, ct);
-        var d = env?.Data;
-        return new CircleTxInfo(d?.Id ?? txId, d?.State ?? "UNKNOWN", d?.TransactionHash, d?.Error ?? d?.Reason);
+        var d = env?.Data?.Transaction ?? env?.Data; // GET nests under data.transaction; create returns data.{id,state}
+        return new CircleTxInfo(d?.Id ?? txId, d?.State ?? "UNKNOWN", d?.TransactionHash ?? d?.TxHash, d?.Error ?? d?.Reason);
     }
+
+    private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
     private static async Task<T?> ReadEnvelopeAsync<T>(HttpResponseMessage resp, CancellationToken ct) where T : class
     {
@@ -118,14 +146,14 @@ public sealed class CircleW3sClient
             var msg = doc.RootElement.TryGetProperty("message", out var m) ? m.GetString() : text;
             throw new InvalidOperationException($"Circle API error {code}: {msg}");
         }
-        return JsonSerializer.Deserialize<T>(text);
+        return JsonSerializer.Deserialize<T>(text, JsonOpts);
     }
 
     private sealed class PublicKeyEnvelope { public PublicKeyData? Data { get; set; } }
     private sealed class PublicKeyData { public string? PublicKey { get; set; } }
 
-    private sealed class WalletsEnvelope { public List<WalletItem>? Data { get; set; } }
-    private sealed class WalletItem { public CircleWalletData? Wallet { get; set; } }
+    private sealed class WalletsEnvelope { public WalletsData? Data { get; set; } }
+    private sealed class WalletsData { public List<CircleWalletData>? Wallets { get; set; } }
     private sealed class CircleWalletData { public string? Id { get; set; } public string? Address { get; set; } }
 
     private sealed class TxEnvelope { public TxData? Data { get; set; } }
@@ -134,7 +162,9 @@ public sealed class CircleW3sClient
         public string? Id { get; set; }
         public string? State { get; set; }
         public string? TransactionHash { get; set; }
+        public string? TxHash { get; set; } // GET shape uses `txHash`
         public string? Error { get; set; }
         public string? Reason { get; set; }
+        public TxData? Transaction { get; set; } // GET shape nests under data.transaction
     }
 }

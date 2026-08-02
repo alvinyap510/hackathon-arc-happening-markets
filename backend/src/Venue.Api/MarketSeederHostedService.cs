@@ -16,6 +16,7 @@ public sealed class MarketSeederHostedService(VenueCore core, IChainGateway gate
     {
         // Let the indexer connect and replay first; then seed.
         await Task.Delay(2000, ct);
+        if (!cfg.SeedMarketsEnabled) return;
         foreach (var seed in cfg.SeedMarkets)
         {
             var marketId = Hash.KeccakHex(seed.QuestionText);
