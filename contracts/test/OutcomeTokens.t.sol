@@ -291,4 +291,12 @@ contract OutcomeTokensTest is Test {
         vm.expectRevert(OutcomeTokens.Unauthorized.selector);
         ot.setRoles(address(0xBAD), address(0xFEE));
     }
+
+    function test_setRoles_rejectsZeroAddress() public {
+        OutcomeTokens fresh = new OutcomeTokens(usdc, operator, address(this));
+        vm.expectRevert(OutcomeTokens.ZeroAddress.selector);
+        fresh.setRoles(address(0), makeAddr("rfm"));
+        vm.expectRevert(OutcomeTokens.ZeroAddress.selector);
+        fresh.setRoles(makeAddr("vault"), address(0));
+    }
 }

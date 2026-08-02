@@ -398,4 +398,13 @@ contract VaultTest is Test {
         vm.expectRevert(Vault.Unauthorized.selector);
         vault.setRoles(address(0xBAD), address(0xFEE));
     }
+
+    function test_setRolesRejectsZeroAddress() public {
+        // Fresh instance: the guard must reject address(0) before roles are frozen.
+        Vault fresh = new Vault(usdc, address(ot), address(this));
+        vm.expectRevert(Vault.ZeroAddress.selector);
+        fresh.setRoles(address(0), makeAddr("rfm"));
+        vm.expectRevert(Vault.ZeroAddress.selector);
+        fresh.setRoles(makeAddr("exchange"), address(0));
+    }
 }

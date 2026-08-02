@@ -47,6 +47,7 @@ contract Vault is IVault, ReentrancyGuard, IERC1155Receiver {
 
     error Unauthorized();
     error RolesAlreadySet();
+    error ZeroAddress();
     error ZeroAmount();
     error RefInUse();
     error InsufficientFree();
@@ -81,6 +82,7 @@ contract Vault is IVault, ReentrancyGuard, IERC1155Receiver {
     function setRoles(address exchange_, address rfm_) external {
         if (msg.sender != deployer) revert Unauthorized();
         if (exchange != address(0) || rfm != address(0)) revert RolesAlreadySet();
+        if (exchange_ == address(0) || rfm_ == address(0)) revert ZeroAddress();
         exchange = exchange_;
         rfm = rfm_;
     }

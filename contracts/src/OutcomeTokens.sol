@@ -49,6 +49,7 @@ contract OutcomeTokens is ERC1155, ReentrancyGuard, IOutcomeTokens {
     error NotExists();
     error AlreadyResolved();
     error ZeroAmount();
+    error ZeroAddress();
     error RolesAlreadySet();
 
     modifier onlyVault() {
@@ -67,6 +68,7 @@ contract OutcomeTokens is ERC1155, ReentrancyGuard, IOutcomeTokens {
     function setRoles(address vault_, address rfm_) external {
         if (msg.sender != deployer) revert Unauthorized();
         if (vault != address(0) || rfm != address(0)) revert RolesAlreadySet();
+        if (vault_ == address(0) || rfm_ == address(0)) revert ZeroAddress();
         vault = vault_;
         rfm = rfm_;
     }
