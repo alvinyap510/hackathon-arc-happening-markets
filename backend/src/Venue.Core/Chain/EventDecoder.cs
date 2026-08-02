@@ -28,7 +28,7 @@ public sealed class EventDecoder
     {
         var address = Domain.Addresses.Normalize(log.Address);
         if (!_byContract.TryGetValue(address, out var table)) return null;
-        var topic0 = log.Topics is { Length: > 0 } ? log.Topics[0]?.ToString() : null;
+        var topic0 = log.Topics is { Length: > 0 } ? NormalizeTopic(log.Topics[0]?.ToString()) : null;
         if (topic0 == null || !table.TryGetValue(topic0, out var fn)) return null;
         return fn(log);
     }
@@ -53,10 +53,10 @@ public sealed class EventDecoder
 
         Add<DepositedEventDto>(vault, (log, d) => new Deposited(Vault, Blk(log), Idx(log), Tx(log), A(d.User), d.Amt));
         Add<WithdrawnEventDto>(vault, (log, d) => new Withdrawn(Vault, Blk(log), Idx(log), Tx(log), A(d.User), d.Amt));
-        Add<TokensDepositedEventDto>(vault, (log, d) => new TokensDeposited(Vault, Blk(log), Idx(log), Tx(log), A(d.User), IdHex(d.Id), d.Amt));
-        Add<TokensWithdrawnEventDto>(vault, (log, d) => new TokensWithdrawn(Vault, Blk(log), Idx(log), Tx(log), A(d.User), IdHex(d.Id), d.Amt));
+        Add<TokensDepositedEventDto>(vault, (log, d) => new TokensDeposited(Vault, Blk(log), Idx(log), Tx(log), A(d.User), RawIdHex(log), d.Amt));
+        Add<TokensWithdrawnEventDto>(vault, (log, d) => new TokensWithdrawn(Vault, Blk(log), Idx(log), Tx(log), A(d.User), RawIdHex(log), d.Amt));
         Add<UsdcMovedEventDto>(vault, (log, d) => new USDCMoved(Vault, Blk(log), Idx(log), Tx(log), A(d.From), A(d.To), d.Amt, B32(d.TradeId)));
-        Add<TokensMovedEventDto>(vault, (log, d) => new TokensMoved(Vault, Blk(log), Idx(log), Tx(log), A(d.From), A(d.To), IdHex(d.Id), d.Amt, B32(d.TradeId)));
+        Add<TokensMovedEventDto>(vault, (log, d) => new TokensMoved(Vault, Blk(log), Idx(log), Tx(log), A(d.From), A(d.To), RawIdHex(log), d.Amt, B32(d.TradeId)));
         Add<LockedEventDto>(vault, (log, d) => new Locked(Vault, Blk(log), Idx(log), Tx(log), B32(d.Ref), A(d.User), d.Amt));
         Add<LockReleasedEventDto>(vault, (log, d) => new LockReleased(Vault, Blk(log), Idx(log), Tx(log), B32(d.Ref), A(d.User), d.Amt));
         Add<LockConsumedEventDto>(vault, (log, d) => new LockConsumed(Vault, Blk(log), Idx(log), Tx(log), B32(d.Ref), A(d.User), d.Amt, A(d.To)));
@@ -89,6 +89,15 @@ public sealed class EventDecoder
 
     // ------------------------------------------------------------ helpers
 
+    /// <summary>Nethereum's Sha3Signature is lowercase hex WITHOUT the 0x prefix, while
+    /// a log topic0 carries it - normalize both to the bare lowercase hex so the table
+    /// lookup can never miss a real-chain event (found by the E2E harness).</summary>
+    private static string NormalizeTopic(string? t)
+    {
+        if (string.IsNullOrEmpty(t)) return "";
+        return t.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? t[2..].ToLowerInvariant() : t.ToLowerInvariant();
+    }
+
     private string Vault => _cfg.NormalizedVault;
     private string OT => _cfg.NormalizedOutcomeTokens;
     private string EX => _cfg.NormalizedExchange;
@@ -96,10 +105,24 @@ public sealed class EventDecoder
 
     private string A(string address) => Domain.Addresses.Normalize(address);
     private static string B32(byte[] b) => Infrastructure.Hash.BytesToHex(b);
-    private static string IdHex(BigInteger id) => Infrastructure.Hash.NormalizeBytes32("0x" + id.ToString("x64"));
     private static ulong Blk(FilterLog l) => (ulong)l.BlockNumber.Value;
     private static ulong Idx(FilterLog l) => (ulong)l.LogIndex.Value;
     private static string Tx(FilterLog l) => l.TransactionHash ?? "";
+
+    /// <summary>
+    /// The ERC-1155 token id as the FIRST 32 bytes of the log data, read verbatim.
+    /// Nethereum/.NET's uint256 BigInteger decode is wrong for ids whose top bit is set
+    /// (e.g. keccak-derived ids) - it produces a >256-bit value with a scrambled byte
+    /// order that the ledger then keys positions by. Found by the E2E harness: an
+    /// over-long id wedged the indexer poll loop. Reading the raw word sidesteps it.
+    /// </summary>
+    private static string RawIdHex(FilterLog l)
+    {
+        var data = l.Data ?? "";
+        if (data.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) data = data[2..];
+        if (data.Length < 64) throw new ArgumentException("token-id event has no 32-byte data word");
+        return Infrastructure.Hash.NormalizeBytes32("0x" + data[..64]);
+    }
 
     private Dictionary<string, Func<FilterLog, VenueEvent?>> Table(string address)
     {
