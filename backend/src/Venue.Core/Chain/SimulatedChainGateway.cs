@@ -1,5 +1,6 @@
 using System.Numerics;
 using Venue.Domain;
+using Venue.Settlement;
 
 #pragma warning disable CS1998 // sync implementations of an async interface (in-memory "node")
 
@@ -59,6 +60,15 @@ public sealed class SimulatedChainGateway : IChainGateway
     {
         lock (_sync)
             return _settleOutcomes.TryGetValue(txHash, out var o) ? o : new SettlementReceipt(TxStatus.Unknown, null);
+    }
+
+    public async Task<bool> IsTransactionPendingAsync(string txHash, CancellationToken ct)
+        => false; // simulated txs mine instantly; a pending state never exists
+
+    public async Task<BatchRevertInfo?> TryGetRevertAsync(string txHash, CancellationToken ct)
+    {
+        lock (_sync)
+            return _settleOutcomes.TryGetValue(txHash, out var o) ? o.Revert : null;
     }
 
     public async Task<string> SubmitFinalizeAsync(BigInteger requestId, CancellationToken ct)

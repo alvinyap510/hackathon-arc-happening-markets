@@ -1,5 +1,6 @@
 using System.Numerics;
 using Venue.Domain;
+using Venue.Settlement;
 
 namespace Venue.Chain;
 
@@ -52,6 +53,12 @@ public interface IChainGateway
 
     Task<string> SubmitSettlementAsync(string batchId, IReadOnlyList<SettlementTrade> trades, CancellationToken ct);
     Task<SettlementReceipt> AwaitSettlementAsync(string txHash, CancellationToken ct);
+
+    /// <summary>Is the tx still in the mempool (submitted but not mined and not dropped)?</summary>
+    Task<bool> IsTransactionPendingAsync(string txHash, CancellationToken ct);
+
+    /// <summary>Best-effort revert attribution for a reverted tx (may be null).</summary>
+    Task<BatchRevertInfo?> TryGetRevertAsync(string txHash, CancellationToken ct);
 
     Task<string> SubmitFinalizeAsync(BigInteger requestId, CancellationToken ct);
     Task<string> SubmitResolveAsync(string marketId, Outcome outcome, CancellationToken ct);

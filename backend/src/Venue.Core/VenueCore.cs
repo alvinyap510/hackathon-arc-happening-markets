@@ -415,8 +415,10 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
         await _gate.RunAsync(() =>
         {
             var failing = matches[revert.FailIndex!.Value];
-            _engine.Cancel(failing.MakerOrderId);
-            _engine.Cancel(failing.TakerOrderId);
+            // UnwindOrder (not Cancel): a fully-matched order is Filled, not Resting, and its
+            // reservation must still be released when its fill fails on chain.
+            _engine.UnwindOrder(failing.MakerOrderId);
+            _engine.UnwindOrder(failing.TakerOrderId);
             _sink.SettlementOutcome(failing.Trade.MarketId, batchId, TxStatus.Reverted, revert.ErrorName, new[] { failing.Trade.TradeId });
             _sink.BookChanged(failing.Trade.MarketId);
             _sink.OrderUpdated(failing.Maker.User, failing.MakerOrderId, "rejected");
@@ -431,8 +433,8 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
         {
             foreach (var m in matches)
             {
-                _engine.Cancel(m.MakerOrderId);
-                _engine.Cancel(m.TakerOrderId);
+                _engine.UnwindOrder(m.MakerOrderId);
+                _engine.UnwindOrder(m.TakerOrderId);
             }
             var ids = matches.Select(m => m.Trade.TradeId).ToList();
             foreach (var g in matches.GroupBy(m => m.Trade.MarketId))

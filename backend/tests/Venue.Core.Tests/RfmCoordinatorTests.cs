@@ -3,6 +3,7 @@ using Venue.Chain;
 using Venue.Domain;
 using Venue.Infrastructure;
 using Venue.Rfm;
+using Venue.Settlement;
 using Xunit;
 
 namespace Venue.Core.Tests;
@@ -94,6 +95,8 @@ public class RfmCoordinatorTests
         public Task<IReadOnlyList<VenueEvent>> DecodeReceiptEventsAsync(string txHash, CancellationToken ct) => Task.FromResult<IReadOnlyList<VenueEvent>>(Array.Empty<VenueEvent>());
         public Task<string> SubmitSettlementAsync(string batchId, IReadOnlyList<SettlementTrade> trades, CancellationToken ct) => throw new NotImplementedException();
         public Task<SettlementReceipt> AwaitSettlementAsync(string txHash, CancellationToken ct) => throw new NotImplementedException();
+        public Task<bool> IsTransactionPendingAsync(string txHash, CancellationToken ct) => throw new NotImplementedException();
+        public Task<BatchRevertInfo?> TryGetRevertAsync(string txHash, CancellationToken ct) => throw new NotImplementedException();
         public Task<string> SubmitFinalizeAsync(BigInteger requestId, CancellationToken ct)
         {
             Finalized.Add(requestId);

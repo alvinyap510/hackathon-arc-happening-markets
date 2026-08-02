@@ -23,6 +23,8 @@ public sealed class SettlementBatcher
     public const int MaxBatch = 8;
     private static readonly TimeSpan FlushInterval = TimeSpan.FromMilliseconds(500);
     private const int MaxRepairAttempts = 3;
+    private const int MaxReconcileChecks = 30;          // ~30 s of re-checks after a submit timeout
+    private static readonly TimeSpan ReconcileInterval = TimeSpan.FromSeconds(1);
 
     private readonly IChainGateway _gateway;
     private readonly ISettlementCoordinator _core;
@@ -154,6 +156,17 @@ public sealed class SettlementBatcher
                 return;
             }
 
+            // A submit TIMEOUT is NOT a cancellation: reconcile by receipt + mempool liveness
+            // before unwinding, so a tx that later mines is confirmed (never double-executed).
+            if (outcome.Status == TxStatus.Unknown && txHash != null)
+                outcome = await ReconcileAsync(txHash, ct);
+
+            if (outcome.Status == TxStatus.Confirmed)
+            {
+                await _core.ConfirmBatchAsync(batchId, remaining);
+                return;
+            }
+
             if (outcome.Status == TxStatus.Reverted && outcome.Revert is { FailIndex: int idx } && idx < remaining.Count && idx >= 0)
             {
                 // Pass a snapshot: the coordinator runs under the gate and must not see the
@@ -172,5 +185,33 @@ public sealed class SettlementBatcher
         // Repair attempts exhausted: nothing left to resubmit safely → unwind the remainder.
         if (remaining.Count > 0)
             await _core.CancelAllOrdersAsync(remaining, "repair_attempts_exhausted");
+    }
+
+    /// <summary>
+    /// Reconcile a timed-out submission: re-check the receipt, and only unwind when the tx is
+    /// provably not mined (confirmed/reverted resolve it; a tx that leaves the mempool without a
+    /// receipt was replaced/expired). A tx still pending at the cap is treated as expired for the
+    /// demo (documented) rather than hanging the settlement slot forever.
+    /// </summary>
+    private async Task<SettlementReceipt> ReconcileAsync(string txHash, CancellationToken ct)
+    {
+        for (var i = 0; i < MaxReconcileChecks; i++)
+        {
+            await Task.Delay(ReconcileInterval, ct);
+            var status = await _gateway.TxStatusAsync(txHash, ct);
+            if (status == TxStatus.Confirmed) return new SettlementReceipt(TxStatus.Confirmed, null);
+            if (status == TxStatus.Reverted)
+            {
+                var revert = await _gateway.TryGetRevertAsync(txHash, ct);
+                return new SettlementReceipt(TxStatus.Reverted, revert);
+            }
+            if (!await _gateway.IsTransactionPendingAsync(txHash, ct))
+            {
+                Console.WriteLine($"settle: tx {txHash} left the mempool unmined -> reconciling as expired");
+                return new SettlementReceipt(TxStatus.Unknown, null);
+            }
+        }
+        Console.WriteLine($"settle: tx {txHash} still pending after reconciliation window -> treating as expired");
+        return new SettlementReceipt(TxStatus.Unknown, null);
     }
 }

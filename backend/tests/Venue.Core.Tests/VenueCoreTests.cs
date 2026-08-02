@@ -3,6 +3,7 @@ using Venue.Broadcasting;
 using Venue.Chain;
 using Venue.Domain;
 using Venue.Infrastructure;
+using Venue.Settlement;
 using Xunit;
 
 namespace Venue.Core.Tests;
@@ -77,5 +78,23 @@ public class VenueCoreTests
         Assert.Equal(new BigInteger(10_000_000), aliceBal.Available);
         var bobBal = await core.GetBalancesAsync(TestData.Bob);
         Assert.Equal(new BigInteger(10_000_000), bobBal.Available);
+    }
+
+    [Fact]
+    public async Task FailedFullFill_ReleasesReservationOfFilledOrder()
+    {
+        var core = await SeedMarketAsync(NewCore());
+
+        await core.PlaceOrderAsync(new OrderRequest(TestData.Alice, Market, Outcome.Yes, OrderSide.Sell, 100_000, 600, OrderType.Limit, "s1", null));
+        var buy = await core.PlaceOrderAsync(new OrderRequest(TestData.Bob, Market, Outcome.Yes, OrderSide.Buy, 100_000, 600, OrderType.Limit, "b1", null));
+        Assert.Equal(OrderStatus.Filled, buy.TerminalStatus); // bob fully matched -> Filled, not Resting
+
+        // A withdrawal-raced full fill reverts on chain: the repair path must unwind bob's
+        // Filled order (Cancel cannot, it only handles Resting/New).
+        await core.RepairBatchAsync("batch_0", buy.Fills.ToList(), new BatchRevertInfo(0, buy.Fills[0].Trade.TradeId, "SettleBatchFailed", ""));
+
+        var bobBal = await core.GetBalancesAsync(TestData.Bob);
+        Assert.Equal(new BigInteger(10_000_000), bobBal.Available); // reservation fully released
+        Assert.Null(await core.GetOrderAsync(buy.Order.OrderId));
     }
 }

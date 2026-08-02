@@ -7,6 +7,7 @@ using Nethereum.Signer;
 using Nethereum.Web3;
 using Nethereum.Web3.Accounts;
 using Venue.Domain;
+using Venue.Settlement;
 
 namespace Venue.Chain;
 
@@ -98,6 +99,15 @@ public sealed class NethereumChainGateway : IChainGateway
             _settlementGate.Release();
         }
     }
+
+    public async Task<bool> IsTransactionPendingAsync(string txHash, CancellationToken ct)
+    {
+        var tx = await _operatorWeb3.Eth.Transactions.GetTransactionByHash.SendRequestAsync(txHash);
+        return tx != null && tx.BlockNumber == null; // in the mempool, not yet mined
+    }
+
+    public async Task<BatchRevertInfo?> TryGetRevertAsync(string txHash, CancellationToken ct)
+        => await RecoverRevertAsync(txHash, ct);
 
     public async Task<SettlementReceipt> AwaitSettlementAsync(string txHash, CancellationToken ct)
     {

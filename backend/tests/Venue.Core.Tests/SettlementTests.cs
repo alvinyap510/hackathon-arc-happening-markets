@@ -153,6 +153,54 @@ public class SettlementTests
         Assert.Equal(1, gateway.SettlementSubmits);
     }
 
+    // ------------------------------------------------------------ timeout reconciliation
+
+    [Fact]
+    public async Task Batcher_TimeoutThatLaterMines_ConfirmsInsteadOfCancelling()
+    {
+        var gateway = new ScriptedGateway();
+        gateway.Outcomes.Enqueue(new SettlementReceipt(TxStatus.Unknown, null)); // AwaitSettlement times out
+        gateway.TxStatusOverride = TxStatus.Confirmed;                           // ...then it mines
+
+        var coordinator = new RecordingCoordinator();
+        var batcher = new SettlementBatcher(gateway, coordinator, TestData.Operator);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var run = Task.Run(() => batcher.RunAsync(cts.Token));
+
+        for (var i = 0; i < 2; i++) batcher.Enqueue(Match(i));
+
+        await WaitUntilAsync(() => coordinator.Confirmed.Count == 1, TimeSpan.FromSeconds(8));
+        cts.Cancel();
+        try { await run; } catch (OperationCanceledException) { /* expected */ }
+
+        Assert.Single(coordinator.Confirmed);
+        Assert.Empty(coordinator.CancelledAll); // never treated as cancelled
+        Assert.Empty(coordinator.Repaired);
+    }
+
+    [Fact]
+    public async Task Batcher_TimeoutThatIsProvablyDropped_Unwinds()
+    {
+        var gateway = new ScriptedGateway();
+        gateway.Outcomes.Enqueue(new SettlementReceipt(TxStatus.Unknown, null)); // AwaitSettlement times out
+        gateway.TxStatusOverride = TxStatus.Pending;                              // still "pending" on re-check
+        gateway.PendingTx = false;                                                // ...but not in the mempool -> replaced/expired
+
+        var coordinator = new RecordingCoordinator();
+        var batcher = new SettlementBatcher(gateway, coordinator, TestData.Operator);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var run = Task.Run(() => batcher.RunAsync(cts.Token));
+
+        for (var i = 0; i < 2; i++) batcher.Enqueue(Match(i));
+
+        await WaitUntilAsync(() => coordinator.CancelledAll.Count == 1, TimeSpan.FromSeconds(8));
+        cts.Cancel();
+        try { await run; } catch (OperationCanceledException) { /* expected */ }
+
+        Assert.Single(coordinator.CancelledAll);
+        Assert.Empty(coordinator.Confirmed);
+    }
+
     // ------------------------------------------------------------- fixtures
 
     private static Order MakeOrder(string user, OrderSide side, Outcome outcome) => new()
@@ -218,6 +266,15 @@ public class SettlementTests
         public Task<SettlementReceipt> AwaitSettlementAsync(string txHash, CancellationToken ct)
             => Task.FromResult(Outcomes.Count > 0 ? Outcomes.Dequeue() : new SettlementReceipt(TxStatus.Confirmed, null));
 
+        public Task<bool> IsTransactionPendingAsync(string txHash, CancellationToken ct)
+            => Task.FromResult(PendingTx);
+
+        public Task<BatchRevertInfo?> TryGetRevertAsync(string txHash, CancellationToken ct)
+            => Task.FromResult(LatestRevert);
+
+        public bool PendingTx { get; set; }
+        public BatchRevertInfo? LatestRevert { get; set; }
+
         public Task<string> SubmitFinalizeAsync(BigInteger requestId, CancellationToken ct) => throw new NotImplementedException();
         public Task<string> SubmitResolveAsync(string marketId, Outcome outcome, CancellationToken ct) => throw new NotImplementedException();
         public Task<string> SubmitDepositAsync(string user, BigInteger amt, CancellationToken ct) => throw new NotImplementedException();
@@ -229,7 +286,10 @@ public class SettlementTests
         public Task<string> SubmitRevealQuoteAsync(string user, BigInteger requestId, BigInteger priceTick, BigInteger size, BigInteger salt, CancellationToken ct) => throw new NotImplementedException();
         public Task<string> SubmitCancelRequestAsync(string user, BigInteger requestId, CancellationToken ct) => throw new NotImplementedException();
         public Task<string> SubmitRedeemAsync(string user, string marketId, BigInteger amt, CancellationToken ct) => throw new NotImplementedException();
-        public Task<TxStatus> TxStatusAsync(string txHash, CancellationToken ct) => Task.FromResult(TxStatus.Pending);
+        public Task<TxStatus> TxStatusAsync(string txHash, CancellationToken ct)
+            => Task.FromResult(TxStatusOverride);
+
+        public TxStatus TxStatusOverride { get; set; } = TxStatus.Pending;
     }
 
     private sealed class RecordingCoordinator : ISettlementCoordinator
