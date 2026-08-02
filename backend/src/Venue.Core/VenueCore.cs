@@ -168,6 +168,7 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
                 var m = GetOrCreate(r.MarketId);
                 m.Resolved = true;
                 m.WinningOutcome = r.Outcome;
+                CloseMarketForResolution(r.MarketId);
                 break;
             case MarketBorn b:
                 var market = GetOrCreate(b.MarketId);
@@ -210,6 +211,25 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
         if (user == null) return;
         foreach (var order in _engine.InsolvencySweep(user))
             BroadcastCancelled(order);
+    }
+
+    /// <summary>
+    /// Close a market for trading (resolution gate): a resolved market must not settle stale
+    /// fills — drain its queued settlement fills and release their orders' reservations, then
+    /// cancel the whole book. Idempotent; called on the MarketResolved event AND before the
+    /// operator's resolve tx so a stale fill can never cross the resolve boundary.
+    /// </summary>
+    private void CloseMarketForResolution(string marketId)
+    {
+        foreach (var pending in _batcher.DrainForMarket(marketId))
+        {
+            _engine.UnwindOrder(pending.MakerOrderId);
+            _engine.UnwindOrder(pending.TakerOrderId);
+            _sink.SettlementOutcome(marketId, "", TxStatus.Reverted, "market_resolved", new[] { pending.Trade.TradeId });
+        }
+        foreach (var order in _engine.CancelMarket(marketId))
+            BroadcastCancelled(order);
+        _sink.BookChanged(marketId);
     }
 
     private void BroadcastCancelled(Order order)
@@ -344,6 +364,25 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
         => _gate.RunAsync(() => Task.FromResult(_rfm.RequestForMarket(marketId)));
 
     // ------------------------------------------------------- settlement hooks
+
+    /// <summary>
+    /// Operator resolution with the resolution gate: close the market (cancel book + drain
+    /// pending fills), let any in-flight batch settle, THEN submit the resolve tx — so a
+    /// stale fill can never mine after resolution. The MarketResolved event re-closes the
+    /// market idempotently when it lands.
+    /// </summary>
+    public async Task ResolveMarketAsync(string marketId, Outcome outcome)
+    {
+        await _gate.RunAsync(() =>
+        {
+            var market = RequireMarket(marketId);
+            if (market.Resolved) throw new InvalidOperationException("market already resolved");
+            CloseMarketForResolution(marketId);
+            return Task.CompletedTask;
+        });
+        await _batcher.AwaitIdleAsync(CancellationToken.None);
+        await _gateway.SubmitResolveAsync(marketId, outcome, CancellationToken.None);
+    }
 
     public async Task ConfirmBatchAsync(string batchId, IReadOnlyList<MatchedTrade> matches)
     {

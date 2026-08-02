@@ -8,7 +8,8 @@ namespace Venue.Engine;
 public sealed record PlaceResult(
     Order Order,
     IReadOnlyList<MatchedTrade> Fills,
-    OrderStatus TerminalStatus); // the order's status after placement (Resting/Filled/Partial)
+    OrderStatus TerminalStatus,
+    string? RejectReason = null); // populated when TerminalStatus == Rejected
 
 public sealed record CancelResult(bool Cancelled, string OrderId, BigInteger ReleasedAmount, string ReleasedAsset);
 
@@ -64,7 +65,9 @@ public sealed class Engine
         if (req.Type == OrderType.Limit && (req.Price < Prices.MinTick || req.Price > Prices.MaxTick))
             throw new ArgumentOutOfRangeException(nameof(req.Price), "limit price must be 1..999 ticks");
 
-        var (asset, amount) = Order.ReserveFor(market.MarketId, req.Outcome, req.Side, req.Size, req.Price);
+        var (asset, amount) = Order.ReserveFor(market.MarketId, req.Outcome, req.Side, req.Size, ReservePrice(req));
+        if (market.Resolved)
+            return Reject(req, market, asset, amount, "market_resolved");
         if (_ledger.Available(req.User, asset) < amount)
             return Reject(req, market, asset, amount, "insufficient_available");
         if (!string.IsNullOrEmpty(req.ClientOrderId) && _byClientId.ContainsKey(req.ClientOrderId))
@@ -78,6 +81,11 @@ public sealed class Engine
         var fills = Matcher.Match(order, Book(market.MarketId), market);
         return FinalizePlacement(order, market, fills);
     }
+
+    /// <summary>A market BUY's worst-case spend is the full notional, so reserve at tick 1000
+    /// (never zero); the order's actual fill price comes from the makers it crosses.</summary>
+    private static long ReservePrice(OrderRequest req)
+        => req.Type == OrderType.Market && req.Side == OrderSide.Buy ? Prices.Denominator : req.Price;
 
     private PlaceResult FinalizePlacement(Order order, Market market, List<MatchedTrade> fills)
     {
@@ -123,7 +131,7 @@ public sealed class Engine
             CreatedAtUnixSec = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             ExpirationUnixSec = req.ExpirationUnixSec,
         };
-        return new PlaceResult(order, Array.Empty<MatchedTrade>(), OrderStatus.Rejected);
+        return new PlaceResult(order, Array.Empty<MatchedTrade>(), OrderStatus.Rejected, reason);
     }
 
     private Order BuildOrder(OrderRequest req, Market market, string asset, BigInteger amount)
@@ -177,6 +185,36 @@ public sealed class Engine
     {
         var key = _byClientId.FirstOrDefault(kv => ReferenceEquals(kv.Value, order)).Key;
         if (key != null) _byClientId.Remove(key);
+    }
+
+    /// <summary>
+    /// Release the FULL remaining reservation of an order regardless of its status — used
+    /// when a fill fails on chain, a market resolves mid-flight, or a batch is abandoned.
+    /// `Cancel` only handles Resting/New orders; this unwinds Filled/Partial orders too so a
+    /// matched-but-never-settled fill can never strand its reservation until restart.
+    /// </summary>
+    public bool UnwindOrder(string orderId)
+    {
+        if (!_orders.TryGetValue(orderId, out var order)) return false;
+        if (order.Status == OrderStatus.Resting) Book(order.MarketId).Remove(order);
+        var release = order.ReservedAmount - order.ReleasedReservation;
+        if (release > 0)
+        {
+            _ledger.ReleaseReservation(order.User, order.ReservedAsset, release);
+            order.ReleaseReservation(release);
+        }
+        order.Status = OrderStatus.Cancelled;
+        _orders.Remove(orderId);
+        RemoveClientId(order);
+        return true;
+    }
+
+    /// <summary>Cancel every live order in a market (resolution / closure). Returns them.</summary>
+    public IReadOnlyList<Order> CancelMarket(string marketId)
+    {
+        var doomed = _orders.Values.Where(o => o.MarketId == marketId).ToList();
+        foreach (var o in doomed) UnwindOrder(o.OrderId);
+        return doomed;
     }
 
     /// <summary>

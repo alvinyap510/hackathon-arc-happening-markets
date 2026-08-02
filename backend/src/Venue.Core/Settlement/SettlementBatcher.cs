@@ -30,6 +30,7 @@ public sealed class SettlementBatcher
     private readonly ConcurrentQueue<MatchedTrade> _queue = new();
     private readonly SemaphoreSlim _signal = new(0, int.MaxValue);
     private long _batchAttempt;
+    private int _busy; // 1 while a batch is submitted/awaiting; read by AwaitIdleAsync
 
     public SettlementBatcher(IChainGateway gateway, ISettlementCoordinator core, string operatorAddress)
     {
@@ -44,6 +45,36 @@ public sealed class SettlementBatcher
     {
         _queue.Enqueue(match);
         _signal.Release();
+    }
+
+    /// <summary>Remove every queued (not-yet-submitted) fill for a market, preserving the
+    /// relative order of the rest. Used on market resolution so no matched fill outlives
+    /// the market's birth → resolve transition.</summary>
+    public IReadOnlyList<MatchedTrade> DrainForMarket(string marketId)
+    {
+        var kept = new List<MatchedTrade>();
+        var removed = new List<MatchedTrade>();
+        while (_queue.TryDequeue(out var m))
+        {
+            if (m.Trade.MarketId == marketId) removed.Add(m);
+            else kept.Add(m);
+        }
+        foreach (var m in kept) _queue.Enqueue(m);
+        return removed;
+    }
+
+    /// <summary>Discard every queued fill (restart/replay: orders are gone, so a stale fill
+    /// must never be submitted).</summary>
+    public void ClearQueue()
+    {
+        while (_queue.TryDequeue(out _)) { }
+    }
+
+    /// <summary>Wait until no batch is currently submitted/awaiting on chain (resolution gate).</summary>
+    public async Task AwaitIdleAsync(CancellationToken ct)
+    {
+        while (Volatile.Read(ref _busy) != 0)
+            await Task.Delay(100, ct);
     }
 
     /// <summary>The settlement loop; run as a background task from the host.</summary>
@@ -87,6 +118,19 @@ public sealed class SettlementBatcher
 
     private async Task SubmitWithRepairAsync(List<MatchedTrade> batch, CancellationToken ct)
     {
+        Interlocked.Exchange(ref _busy, 1);
+        try
+        {
+            await SubmitWithRepairCoreAsync(batch, ct);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _busy, 0);
+        }
+    }
+
+    private async Task SubmitWithRepairCoreAsync(List<MatchedTrade> batch, CancellationToken ct)
+    {
         var remaining = batch;
         for (var attempt = 0; attempt <= MaxRepairAttempts && remaining.Count > 0; attempt++)
         {
@@ -119,9 +163,14 @@ public sealed class SettlementBatcher
                 continue;
             }
 
-            // Unknown/dropped tx, non-SettleBatchFailed revert, or attribution unclear → cancel all.
+            // Non-SettleBatchFailed revert, attribution unclear, or a tx that was provably
+            // never mined → cancel all, re-cross.
             await _core.CancelAllOrdersAsync(remaining, outcome.Revert?.ErrorName ?? (txHash == null ? "submit_failed" : "unknown_revert"));
             return;
         }
+
+        // Repair attempts exhausted: nothing left to resubmit safely → unwind the remainder.
+        if (remaining.Count > 0)
+            await _core.CancelAllOrdersAsync(remaining, "repair_attempts_exhausted");
     }
 }

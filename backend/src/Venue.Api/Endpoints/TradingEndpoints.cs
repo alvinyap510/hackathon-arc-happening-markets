@@ -130,13 +130,26 @@ public static class TradingEndpoints
 
         g.MapPost("/markets/{id}/resolve", async (string id, ResolveReq req, HttpRequest http) =>
         {
-            // Operator-only demo hook: resolve a market to its winning outcome.
+            // Operator-only demo hook: resolve a market to its winning outcome. Goes through
+            // the resolution gate (book + pending fills drained) before the on-chain tx.
             var user = UserOf(http, sessions, cfg);
             if (user == null || !string.Equals(user, cfg.Chain.OperatorAddress, StringComparison.OrdinalIgnoreCase))
                 return Results.Forbid();
             var outcome = ParseEnum<Outcome>(req.Outcome);
             if (outcome == null) return Results.BadRequest(new { error = "outcome must be yes|no" });
-            return await Submit(() => gateway.SubmitResolveAsync(id, outcome.Value, CancellationToken.None));
+            try
+            {
+                await core.ResolveMarketAsync(id, outcome.Value);
+                return Results.Ok(new { marketId = id, resolved = true, outcome = outcome.Value.ToString().ToLowerInvariant() });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
         });
 
         g.MapGet("/resolution/{marketId}", async (string marketId) =>
