@@ -496,6 +496,52 @@ contract RFMTest is Test {
         assertTrue(false, "MarketBorn not emitted");
     }
 
+    function test_finalize_partialWinnerZeroRemainderWedge() public {
+        // Regression: a partially-filled winner whose FILLED counter-leg exactly equals
+        // its FULL locked counter-leg (floor-rounding collision) produced a
+        // releaseLock(ref, 0) that reverted, wedging finalize permanently.
+        // quantity 100e6 @ maxPriceTick 999; MM2 fills 99,374,500 of 99,375,000 @ tick 999:
+        //   full locked counter-leg = 99,375,000 - floor(99,375,000*999/1000) = 99,375
+        //   filled counter-leg     = 99,374,500 - floor(99,374,500*999/1000) = 99,375
+        //   remainder              = 0  -> releaseLock(0) must be a no-op, not a revert.
+        _deposit(institution, 600e6); // escrow 99.9e6 + bond 500e6
+        uint256 quantity = 100_000_000;
+        vm.prank(institution);
+        uint256 requestId = rfm.postRequest(
+            market, IRFM.Side.YES, quantity, 999, 10e6, block.timestamp + 3600, block.timestamp + 7200
+        );
+
+        // MM1: 625,500 @ tick 998 -> lock = 625,500 - 624,249 = 1,251.
+        _fundMM(mm1, 1251);
+        // MM2: 99,375,000 @ tick 999 -> lock = 99,375.
+        _fundMM(mm2, 99_375);
+        _commit(mm1, requestId, 998, 625_500, 1);
+        _commit(mm2, requestId, 999, 99_375_000, 2);
+        _warpToReveal();
+        _reveal(mm1, requestId, 998, 625_500, 1);
+        _reveal(mm2, requestId, 999, 99_375_000, 2);
+        _warpPastReveal();
+
+        // Must finalize on the first attempt (no wedge, no retry loop).
+        rfm.finalize(requestId);
+        assertEq(uint256(rfm.phase(requestId)), uint256(IRFM.Phase.FINALIZED));
+
+        bytes32 marketId = rfm.marketIdOf(requestId);
+        uint256 yesId = ot.tokenId(marketId, IOutcomeTokens.Outcome.YES);
+        uint256 noId = ot.tokenId(marketId, IOutcomeTokens.Outcome.NO);
+        assertEq(vault.tokenBal(institution, yesId), quantity);
+        assertEq(vault.tokenBal(mm1, noId), 625_500);
+        assertEq(vault.tokenBal(mm2, noId), 99_374_500);
+        assertEq(usdc.balanceOf(address(ot)), quantity);
+
+        // Every lock and bond resolves; nothing stranded.
+        assertEq(vault.lockedBal(institution), 0);
+        assertEq(vault.lockedBal(mm1), 0);
+        assertEq(vault.lockedBal(mm2), 0);
+        assertEq(vault.freeBal(institution), 600e6 - (99_899_374)); // escrow consumed, bond+remainder released
+        assertEq(vault.freeBal(mm2), BOND); // reveal lock fully consumed, bond released
+    }
+
     function test_finalize_32Quotes() public {
         // Build-gate gas scenario: full slot occupation, all in-range, finalize must succeed.
         _deposit(institution, 1200e6);

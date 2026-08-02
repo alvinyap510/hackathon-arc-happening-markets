@@ -356,13 +356,18 @@ contract RFM is ReentrancyGuard, IRFM {
 
     function _settleWinnerBonds(uint256 requestId, FillSet memory f) internal {
         // Fully-filled winners: reveal lock fully consumed by mintPair. Partially-filled
-        // winners: consume exactly the filled counter-leg, release the remainder.
+        // winners: consume exactly the filled counter-leg, release the remainder. A
+        // floor-rounding collision can make the remainder exactly zero, which is a
+        // legitimate no-op (releaseLock(0) would revert and wedge finalize forever).
         for (uint256 i = 0; i < f.len; ++i) {
             vault.releaseLock(mmBondRef(requestId, f.mm[i]), RFM_BOND);
             Reveal storage rv = reveals[requestId][f.mm[i]];
             if (f.size[i] < rv.size) {
                 uint256 filledLeg = f.size[i] - _mulDivFloor(f.size[i], f.tick[i]);
-                vault.releaseLock(mmRevealRef(requestId, f.mm[i]), rv.lockedAmount - filledLeg);
+                uint256 remainder = rv.lockedAmount - filledLeg;
+                if (remainder > 0) {
+                    vault.releaseLock(mmRevealRef(requestId, f.mm[i]), remainder);
+                }
             }
             emit RfmFill(requestId, f.mm[i], f.tick[i], f.size[i]);
         }

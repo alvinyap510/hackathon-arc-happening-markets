@@ -85,9 +85,14 @@ contract CTFExchangeLite is ReentrancyGuard {
         address buyer = t.partyB;
         uint256 cost = (t.size * t.outcomeTick) / 1000;
         uint256 id = outcomeTokens.tokenId(t.marketId, t.outcome);
-        if (vault.freeBal(buyer) < cost) revert SettleBatchFailed(i, t.tradeId);
         if (vault.tokenBal(seller, id) < t.size) revert SettleBatchFailed(i, t.tradeId);
-        vault.moveUSDC(buyer, seller, cost, t.tradeId);
+        // A tick-0 or micro-size transfer rounds the USDC leg to zero: the tokens
+        // still move, the zero-cost USDC leg is a legitimate no-op (moveUSDC would
+        // revert on ZeroAmount).
+        if (cost > 0) {
+            if (vault.freeBal(buyer) < cost) revert SettleBatchFailed(i, t.tradeId);
+            vault.moveUSDC(buyer, seller, cost, t.tradeId);
+        }
         vault.moveTokens(seller, buyer, id, t.size, t.tradeId);
     }
 

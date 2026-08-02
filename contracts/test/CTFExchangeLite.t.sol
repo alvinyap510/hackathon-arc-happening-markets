@@ -143,6 +143,38 @@ contract CTFExchangeLiteTest is Test {
         assertEq(vault.usdcBal(bob), 73e6);
     }
 
+    function test_settleBatch_transferTickZero() public {
+        _deposit(alice, 100e6);
+        _deposit(bob, 100e6);
+        _createMarket();
+        (uint256 yesCost, uint256 noCost) = _mintBasePositions();
+
+        // tick 0: USDC leg rounds to zero, tokens still move.
+        CTFExchangeLite.Trade[] memory trades = new CTFExchangeLite.Trade[](1);
+        trades[0] = _trade(keccak256("t2"), CTFExchangeLite.TradeClass.TRANSFER, IOutcomeTokens.Outcome.YES, alice, bob, 0, 10e6);
+        _settle(keccak256("b2"), trades);
+        assertEq(vault.tokenBal(alice, yesId), 40e6);
+        assertEq(vault.tokenBal(bob, yesId), 10e6);
+        assertEq(vault.usdcBal(alice), 100e6 - yesCost); // nothing received
+        assertEq(vault.usdcBal(bob), 100e6 - noCost); // nothing paid
+    }
+
+    function test_settleBatch_transferMicroSizeZeroCost() public {
+        _deposit(alice, 100e6);
+        _deposit(bob, 100e6);
+        _createMarket();
+        (uint256 yesCost, uint256 noCost) = _mintBasePositions();
+
+        // size*tick = 999*1 = 999 < 1000 -> cost rounds to zero.
+        CTFExchangeLite.Trade[] memory trades = new CTFExchangeLite.Trade[](1);
+        trades[0] = _trade(keccak256("t2"), CTFExchangeLite.TradeClass.TRANSFER, IOutcomeTokens.Outcome.YES, alice, bob, 1, 999);
+        _settle(keccak256("b2"), trades);
+        assertEq(vault.tokenBal(alice, yesId), 50e6 - 999);
+        assertEq(vault.tokenBal(bob, yesId), 999);
+        assertEq(vault.usdcBal(alice), 100e6 - yesCost);
+        assertEq(vault.usdcBal(bob), 100e6 - noCost);
+    }
+
     // ------------------------------------------------------------------ MERGE
 
     function test_settleBatch_merge() public {
