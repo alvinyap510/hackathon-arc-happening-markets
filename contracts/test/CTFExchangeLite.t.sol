@@ -320,7 +320,8 @@ contract CTFExchangeLiteTest is Test {
         CTFExchangeLite.Trade[] memory trades = new CTFExchangeLite.Trade[](1);
         trades[0] = _trade(keccak256("t1"), CTFExchangeLite.TradeClass.TRANSFER, IOutcomeTokens.Outcome.YES, alice, bob, 1001, 10e6);
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(CTFExchangeLite.TickOutOfRange.selector, 1001));
+        // Validation failures carry the failing trade index + tradeId for the repair loop.
+        vm.expectRevert(abi.encodeWithSelector(CTFExchangeLite.SettleBatchFailed.selector, 0, keccak256("t1")));
         exch.settleBatch(keccak256("b1"), trades);
     }
 

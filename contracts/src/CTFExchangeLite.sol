@@ -41,7 +41,6 @@ contract CTFExchangeLite is ReentrancyGuard {
     error BatchReused(bytes32 batchId);
     error BatchTooLarge(uint256 len);
     error EmptyBatch();
-    error TickOutOfRange(uint256 tick);
     error SettleBatchFailed(uint256 index, bytes32 tradeId);
 
     constructor(address vault_, address outcomeTokens_, address operator_) {
@@ -80,7 +79,7 @@ contract CTFExchangeLite is ReentrancyGuard {
     // ------------------------------------------------------------------ trades
 
     function _settleTransfer(Trade calldata t, uint256 i) internal {
-        if (t.outcomeTick > 1000) revert TickOutOfRange(t.outcomeTick);
+        if (t.outcomeTick > 1000) revert SettleBatchFailed(i, t.tradeId);
         address seller = t.partyA;
         address buyer = t.partyB;
         uint256 cost = (t.size * t.outcomeTick) / 1000;
@@ -97,7 +96,7 @@ contract CTFExchangeLite is ReentrancyGuard {
     }
 
     function _settleMint(Trade calldata t, uint256 i) internal {
-        if (t.outcomeTick > 1000) revert TickOutOfRange(t.outcomeTick);
+        if (t.outcomeTick > 1000) revert SettleBatchFailed(i, t.tradeId);
         address yesParty = t.partyA;
         address noParty = t.partyB;
         uint256 yesCost = (t.size * t.outcomeTick) / 1000;
@@ -116,7 +115,7 @@ contract CTFExchangeLite is ReentrancyGuard {
     }
 
     function _settleMerge(Trade calldata t, uint256 i) internal {
-        if (t.outcomeTick > 1000) revert TickOutOfRange(t.outcomeTick);
+        if (t.outcomeTick > 1000) revert SettleBatchFailed(i, t.tradeId);
         address yesParty = t.partyA;
         address noParty = t.partyB;
         uint256 yesCost = (t.size * t.outcomeTick) / 1000;
