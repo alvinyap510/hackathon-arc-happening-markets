@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">Sports market</title>
+  <desc id="desc">An abstract ball suspended over the clean arcs of a night stadium.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#06080c"/>
+      <stop offset="1" stop-color="#131824"/>
+    </linearGradient>
+    <radialGradient id="field" cx="50%" cy="100%" r="70%">
+      <stop stop-color="#c8a23e" stop-opacity=".14"/>
+      <stop offset="1" stop-color="#c8a23e" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <ellipse cx="800" cy="759" rx="590" ry="360" fill="url(#field)"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M235 679c113-168 311-252 565-252s452 84 565 252" stroke="#293244" stroke-width="20"/>
+    <path d="M319 690c110-119 270-178 481-178s371 59 481 178" stroke="#5d687e" stroke-width="12"/>
+    <path d="M231 697h1138" stroke="#e3ddcf" stroke-width="14"/>
+    <ellipse cx="800" cy="704" rx="420" ry="91" stroke="#c8a23e" stroke-width="10"/>
+    <circle cx="800" cy="365" r="155" stroke="#e3ddcf" stroke-width="14"/>
+    <path d="m800 283 79 57-30 93h-98l-30-93Z" stroke="#e3ddcf" stroke-width="10"/>
+    <path d="m721 340-69-22M879 340l69-22M751 433l-44 66M849 433l44 66M800 283v-73" stroke="#5d687e" stroke-width="10"/>
+  </g>
+  <path d="m800 283 79 57-30 93h-98l-30-93Z" fill="#c8a23e" opacity=".78"/>
+</svg>
