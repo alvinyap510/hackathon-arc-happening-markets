@@ -12,22 +12,29 @@ namespace Venue.Indexing;
 /// </summary>
 public sealed class EventIndexer
 {
-    private const ulong ChunkSize = 5000;
-    private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(500);
+    /// <summary>Max blocks fetched per eth_getLogs call - a sane span for public RPCs that
+    /// enforce a maximum range (2000 is comfortably inside Arc's public-RPC limit; catch-up
+    /// across successive polls covers larger gaps).</summary>
+    private const ulong MaxBlockSpan = 2000;
+
+    private const int MaxBackoffMs = 30_000;
+    private const int InitialBackoffMs = 1_000;
 
     private readonly IChainGateway _gateway;
     private readonly Func<IReadOnlyList<VenueEvent>, Task> _apply;
     private readonly Func<Task>? _onReplayStart;
     private readonly ulong _startBlock;
+    private readonly int _pollIntervalMs;
     private ulong _cursorBlock;
     private string _cursorHash = "";
 
-    public EventIndexer(IChainGateway gateway, Func<IReadOnlyList<VenueEvent>, Task> apply, Func<Task>? onReplayStart, ulong startBlock)
+    public EventIndexer(IChainGateway gateway, Func<IReadOnlyList<VenueEvent>, Task> apply, Func<Task>? onReplayStart, ulong startBlock, int pollIntervalMs = 2000)
     {
         _gateway = gateway;
         _apply = apply;
         _onReplayStart = onReplayStart;
         _startBlock = startBlock;
+        _pollIntervalMs = pollIntervalMs;
         _cursorBlock = startBlock;
     }
 
@@ -44,7 +51,7 @@ public sealed class EventIndexer
         while (from <= latest)
         {
             ct.ThrowIfCancellationRequested();
-            var to = Math.Min(from + ChunkSize - 1, latest);
+            var to = Math.Min(from + MaxBlockSpan - 1, latest);
             var events = await _gateway.FetchLogsAsync(from, to, ct);
             if (events.Count > 0) await _apply(events);
             _cursorBlock = to;
@@ -69,19 +76,30 @@ public sealed class EventIndexer
 
         var latest = await _gateway.LatestBlockAsync(ct);
         if (latest <= _cursorBlock) return;
-        var events = await _gateway.FetchLogsAsync(_cursorBlock + 1, latest, ct);
+        // Cap the per-call span: if the chain is far ahead, catch up over successive polls.
+        var to = Math.Min(latest, _cursorBlock + MaxBlockSpan);
+        var events = await _gateway.FetchLogsAsync(_cursorBlock + 1, to, ct);
         if (events.Count > 0) await _apply(events);
-        _cursorBlock = latest;
-        _cursorHash = await _gateway.GetBlockHashAsync(latest, ct);
+        _cursorBlock = to;
+        _cursorHash = await _gateway.GetBlockHashAsync(to, ct);
     }
 
+    /// <summary>
+    /// Poll loop with exponential backoff on RPC failure (public RPCs rate-limit
+    /// eth_getLogs with -32011). On a failure we do ONE eth_getLogs per backoff interval,
+    /// growing 1s -> 2s -> ... capped at 30s, and reset instantly on success - so the
+    /// indexer lives within the rate limit and recovers when the RPC frees up.
+    /// </summary>
     public async Task RunAsync(CancellationToken ct)
     {
+        var backoffMs = 0;
         while (!ct.IsCancellationRequested)
         {
             try
             {
                 await PollOnceAsync(ct);
+                backoffMs = 0;
+                await Task.Delay(_pollIntervalMs, ct);
             }
             catch (OperationCanceledException)
             {
@@ -89,9 +107,18 @@ public sealed class EventIndexer
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"indexer: poll failed: {ex.Message}");
+                if (backoffMs == 0) backoffMs = InitialBackoffMs;
+                else backoffMs = Math.Min(backoffMs * 2, MaxBackoffMs);
+                Console.WriteLine($"indexer: poll failed: {ex.Message}; retrying in {backoffMs}ms");
+                try
+                {
+                    await Task.Delay(backoffMs, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
             }
-            await Task.Delay(PollInterval, ct);
         }
     }
 }

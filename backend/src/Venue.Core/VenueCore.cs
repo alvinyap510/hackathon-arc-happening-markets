@@ -36,7 +36,7 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
     private CancellationTokenSource? _cts;
     private Task? _loops;
 
-    public VenueCore(ChainConfig cfg, IChainGateway gateway, IEventSink sink)
+    public VenueCore(ChainConfig cfg, IChainGateway gateway, IEventSink sink, int indexerPollIntervalMs = 2000)
     {
         _cfg = cfg;
         _gateway = gateway;
@@ -45,7 +45,7 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
         _engine = new TradingEngine(_ledger, _markets);
         _rfm = new RfmCoordinator(gateway);
         _batcher = new SettlementBatcher(gateway, this, cfg.OperatorAddress);
-        _indexer = new EventIndexer(gateway, ApplyEventsAsync, ReplayResetAsync, cfg.StartBlock);
+        _indexer = new EventIndexer(gateway, ApplyEventsAsync, ReplayResetAsync, cfg.StartBlock, indexerPollIntervalMs);
     }
 
     public ChainConfig Config => _cfg;

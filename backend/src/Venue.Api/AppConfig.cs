@@ -32,6 +32,10 @@ public sealed class AppConfig
     public required int SessionRatePerMinute { get; init; }
     public required int GlobalRatePerMinute { get; init; }
 
+    /// <summary>Indexer poll interval in ms. Public RPCs rate-limit eth_getLogs, so the
+    /// default is RPC-friendly (2s); anvil/e2e profiles can lower it.</summary>
+    public required int IndexerPollIntervalMs { get; init; }
+
     public static AppConfig Load(IConfiguration cfg)
     {
         var chain = cfg.GetSection("Venue:Chain");
@@ -77,6 +81,7 @@ public sealed class AppConfig
             FaucetRatePerMinute = cfg.GetValue<int?>("Venue:RateLimit:FaucetPerMinute") ?? 5,
             SessionRatePerMinute = cfg.GetValue<int?>("Venue:RateLimit:SessionPerMinute") ?? 10,
             GlobalRatePerMinute = cfg.GetValue<int?>("Venue:RateLimit:GlobalPerMinute") ?? 600,
+            IndexerPollIntervalMs = cfg.GetValue<int?>("Venue:Indexer:PollIntervalMs") ?? 2000,
             SeedMarkets = new[]
             {
                 new SeedMarket("Will Bitcoin close above $120,000 on 2026-08-15?", "Coinbase index price", 1786838340),

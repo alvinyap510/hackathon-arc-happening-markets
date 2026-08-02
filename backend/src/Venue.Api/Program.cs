@@ -62,7 +62,7 @@ else
 devAccounts.AttachGateway(gateway);
 
 // --- venue core + WS hub (circular: hub needs core, core needs the sink) ---
-var core = new VenueCore(appCfg.Chain, gateway, new NullEventSink());
+var core = new VenueCore(appCfg.Chain, gateway, new NullEventSink(), appCfg.IndexerPollIntervalMs);
 var hub = new WsHub(core);
 core.SetSink(hub);
 
