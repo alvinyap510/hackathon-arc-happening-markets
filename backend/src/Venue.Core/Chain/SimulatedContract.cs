@@ -83,6 +83,11 @@ public sealed class SimulatedContract
 
     public string Operator => _operator;
 
+    /// <summary>Test-visible state accessors (mirror the on-chain view functions).</summary>
+    public BigInteger UsdcOf(string user) => _usdc.GetValueOrDefault(Domain.Addresses.Normalize(user));
+    public BigInteger TokenOf(string user, string tokenId) => Tok(Domain.Addresses.Normalize(user), Hash.NormalizeBytes32(tokenId));
+    public BigInteger FreeOf(string user) => Free(Domain.Addresses.Normalize(user));
+
     private BigInteger Free(string user) => _usdc.GetValueOrDefault(user) - _locked.GetValueOrDefault(user);
     private BigInteger Tok(string user, string id) => _tokens.GetValueOrDefault((user, id));
     private void AddUsdc(string user, BigInteger amt) => _usdc[user] = _usdc.GetValueOrDefault(user) + amt;
@@ -158,6 +163,11 @@ public sealed class SimulatedContract
 
     // ------------------------------------------------------------ settleBatch
 
+    /// <summary>
+    /// settleBatch is WHOLE-BATCH ATOMIC exactly like the Solidity: every balance and
+    /// usedTradeId mutation is applied to a snapshot, and ANY trade failure rolls the ENTIRE
+    /// batch back (no state change, no events) with a SettleBatchFailed(index, tradeId) revert.
+    /// </summary>
     public SimOpResult SettleBatch(string batchId, IReadOnlyList<SettlementTrade> trades, TxCtx ctx)
     {
         var batchKey = Hash.NormalizeBytes32(batchId);
@@ -165,14 +175,15 @@ public sealed class SimulatedContract
         if (trades.Count == 0) return Revert(ctx, new Settlement.BatchRevertInfo(null, batchId, "EmptyBatch", ""));
         if (trades.Count > MaxBatch) return Revert(ctx, new Settlement.BatchRevertInfo(null, batchId, "BatchTooLarge", trades.Count.ToString()));
 
+        var snapshot = SnapshotState();
         var events = new List<VenueEvent>();
         for (var i = 0; i < trades.Count; i++)
         {
             var t = trades[i];
             var tKey = Hash.NormalizeBytes32(t.TradeId);
-            if (_usedTradeIds.TryGetValue(tKey, out var tused) && tused) return Revert(ctx, new Settlement.BatchRevertInfo(i, t.TradeId, "SettleBatchFailed", ""));
-            if (t.Size <= 0) return Revert(ctx, new Settlement.BatchRevertInfo(i, t.TradeId, "SettleBatchFailed", ""));
-            if (t.OutcomeTick > 1000) return Revert(ctx, new Settlement.BatchRevertInfo(i, t.TradeId, "TickOutOfRange", ""));
+            if (_usedTradeIds.TryGetValue(tKey, out var tused) && tused) return Fail(snapshot, ctx, i, t);
+            if (t.Size <= 0) return Fail(snapshot, ctx, i, t);
+            if (t.OutcomeTick > 1000) return Fail(snapshot, ctx, i, t);
 
             switch (t.Class)
             {
@@ -183,7 +194,7 @@ public sealed class SimulatedContract
                     var cost = Prices.LegCost(t.Size, t.OutcomeTick);
                     var id = Assets.TokenId(t.MarketId, t.Outcome ?? Outcome.Yes);
                     if (Free(buyer) < cost || Tok(seller, id) < t.Size)
-                        return Revert(ctx, new Settlement.BatchRevertInfo(i, t.TradeId, "SettleBatchFailed", ""));
+                        return Fail(snapshot, ctx, i, t);
                     SubUsdc(buyer, cost); AddUsdc(seller, cost);
                     SubTok(seller, id, t.Size); AddTok(buyer, id, t.Size);
                     _usedTradeIds[tKey] = true;
@@ -196,7 +207,7 @@ public sealed class SimulatedContract
                     var yesCost = Prices.LegCost(t.Size, t.OutcomeTick);
                     var noCost = t.Size - yesCost;
                     if (Free(t.PartyA) < yesCost || Free(t.PartyB) < noCost)
-                        return Revert(ctx, new Settlement.BatchRevertInfo(i, t.TradeId, "SettleBatchFailed", ""));
+                        return Fail(snapshot, ctx, i, t);
                     SubUsdc(t.PartyA, yesCost); SubUsdc(t.PartyB, noCost);
                     var yesId = Assets.TokenId(t.MarketId, Outcome.Yes);
                     var noId = Assets.TokenId(t.MarketId, Outcome.No);
@@ -219,7 +230,7 @@ public sealed class SimulatedContract
                     var yesId = Assets.TokenId(t.MarketId, Outcome.Yes);
                     var noId = Assets.TokenId(t.MarketId, Outcome.No);
                     if (Tok(t.PartyA, yesId) < t.Size || Tok(t.PartyB, noId) < t.Size)
-                        return Revert(ctx, new Settlement.BatchRevertInfo(i, t.TradeId, "SettleBatchFailed", ""));
+                        return Fail(snapshot, ctx, i, t);
                     SubTok(t.PartyA, yesId, t.Size); SubTok(t.PartyB, noId, t.Size);
                     var yesCredit = Prices.LegCost(t.Size, t.OutcomeTick);
                     AddUsdc(t.PartyA, yesCredit); AddUsdc(t.PartyB, t.Size - yesCredit);
@@ -233,6 +244,29 @@ public sealed class SimulatedContract
         _usedBatchIds[batchKey] = true;
         events.Add(new BatchSettled(_exchange, ctx.BlockNumber, ctx.NextLogIndex(), ctx.TxHash, batchId, trades.Select(t => t.TradeId).ToArray()));
         return new SimOpResult { Events = events };
+    }
+
+    private SimOpResult Fail((Dictionary<string, BigInteger> usdc, Dictionary<(string, string), BigInteger> tokens, Dictionary<string, bool> used) snapshot, TxCtx ctx, int index, SettlementTrade trade)
+    {
+        RestoreState(snapshot);
+        return new SimOpResult
+        {
+            Events = Array.Empty<VenueEvent>(),
+            Revert = new Settlement.BatchRevertInfo(index, trade.TradeId, "SettleBatchFailed", ""),
+        };
+    }
+
+    private (Dictionary<string, BigInteger>, Dictionary<(string, string), BigInteger>, Dictionary<string, bool>) SnapshotState()
+        => (new Dictionary<string, BigInteger>(_usdc), new Dictionary<(string, string), BigInteger>(_tokens), new Dictionary<string, bool>(_usedTradeIds));
+
+    private void RestoreState((Dictionary<string, BigInteger>, Dictionary<(string, string), BigInteger>, Dictionary<string, bool>) snapshot)
+    {
+        _usdc.Clear();
+        foreach (var kv in snapshot.Item1) _usdc[kv.Key] = kv.Value;
+        _tokens.Clear();
+        foreach (var kv in snapshot.Item2) _tokens[kv.Key] = kv.Value;
+        _usedTradeIds.Clear();
+        foreach (var kv in snapshot.Item3) _usedTradeIds[kv.Key] = kv.Value;
     }
 
     // -------------------------------------------------------------- RFM ops
