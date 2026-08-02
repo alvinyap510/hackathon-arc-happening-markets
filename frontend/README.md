@@ -32,7 +32,8 @@ One env flag (`frontend/.env.local`, see `.env.example`):
   2 seeded markets quoted by a bot, a scripted sealed auction that plays
   COMMIT → REVEAL → FINALIZED → market born (the auction starts when you first open
   the RFM tab), fills, positions and balances. This is the standalone demo mode.
-- `VITE_API_MODE=real` - talks to `submission/backend` over REST + WS. The wire
+- `VITE_API_MODE=real` - talks to `submission/backend` over REST (`{VITE_API_URL}/v1/*`)
+  + WS (`/ws`, with seq/generation gap detection and REST resnapshot). The wire
   surface is exactly the mock's: `src/lib/api.ts` (`VenueApi`) is the single seam;
   swap happens via dynamic import, no UI code changes.
 
