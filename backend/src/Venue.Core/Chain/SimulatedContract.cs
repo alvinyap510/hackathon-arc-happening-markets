@@ -456,9 +456,10 @@ public sealed class SimulatedContract
             ? fills.Select(f => new Allocation(f.Mm, f.Size)).ToArray()
             : new[] { new Allocation(r.Requester, filled) };
 
-        // consume LOCK funding internally, credit allocations
-        foreach (var f in funding)
-            ConsumeLockInternal(f.Ref, f.Amount, f.Account);
+    // consume LOCK funding internally, credit allocations
+    // Pool funding moves locked USDC INTO the collateral pool — debit the funder, credit NOBODY.
+    foreach (var f in funding)
+        ConsumeLockToPool(f.Ref, f.Amount);
         var yesId = Assets.TokenId(marketId, Outcome.Yes);
         var noId = Assets.TokenId(marketId, Outcome.No);
         foreach (var a in yesAlloc) AddTok(a.Account, yesId, a.Amount);
@@ -528,6 +529,10 @@ public sealed class SimulatedContract
         _locks[refKey] = next <= 0 ? (lk.User, BigInteger.Zero, false) : (lk.User, next, true);
     }
 
+    /// <summary>
+    /// Slash/pay: locked -&gt; internal credit of `to`. Used ONLY for bond slashing
+    /// (non-revealer / out-of-range MM bonds to the institution) and refund-free payments.
+    /// </summary>
     private void ConsumeLockInternal(string refKey, BigInteger amt, string to)
     {
         if (amt <= 0) return;
@@ -536,6 +541,22 @@ public sealed class SimulatedContract
         _locked[lk.User] = _locked.GetValueOrDefault(lk.User) - amt;
         SubUsdc(lk.User, amt);
         AddUsdc(to, amt);
+        _locks[refKey] = next <= 0 ? (lk.User, BigInteger.Zero, false) : (lk.User, next, true);
+    }
+
+    /// <summary>
+    /// Lock-to-POOL consumption (mirrors Vault.mintPair funding[] LOCK): the locked amount is
+    /// debited from the funder's internal balance into the collateral pool — NO recipient is
+    /// credited. This is how RFM pool funding is paid; the funder must NOT keep the USDC and
+    /// also receive outcome tokens redeemable for the same USDC.
+    /// </summary>
+    private void ConsumeLockToPool(string refKey, BigInteger amt)
+    {
+        if (amt <= 0) return;
+        if (!_locks.TryGetValue(refKey, out var lk) || !lk.Live) return;
+        var next = lk.Amount - amt;
+        _locked[lk.User] = _locked.GetValueOrDefault(lk.User) - amt;
+        SubUsdc(lk.User, amt);
         _locks[refKey] = next <= 0 ? (lk.User, BigInteger.Zero, false) : (lk.User, next, true);
     }
 
@@ -550,7 +571,10 @@ public sealed class SimulatedContract
         return RfmPhase.Reveal;
     }
 
-    private BigInteger Now => DateTimeOffset.UtcNow.ToUnixTimeSeconds() < 0 ? BigInteger.Zero : new BigInteger(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+    /// <summary>Test hook: override the simulated chain clock (unix seconds).</summary>
+    public BigInteger? NowOverride { get; set; }
+
+    private BigInteger Now => NowOverride ?? (DateTimeOffset.UtcNow.ToUnixTimeSeconds() < 0 ? BigInteger.Zero : new BigInteger(DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
 
     private BigInteger ChainId => 5042002;
 

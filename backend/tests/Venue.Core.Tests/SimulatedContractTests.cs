@@ -30,6 +30,43 @@ public class SimulatedContractTests
     private static SettlementTrade Mint(int i, string yesParty, string noParty, BigInteger size, long tick)
         => new(TradeId(i), Market, TradeClass.Mint, null, yesParty, noParty, tick, size);
 
+    [Fact]
+    public void Finalize_RfmPoolFunding_DebitsFunderIntoPool()
+    {
+        var c = NewContract();
+        var t = new BigInteger(1_700_000_000); // base clock
+        c.NowOverride = t;
+        Deposit(c, TestData.Alice, 1_000_000_000);
+        Deposit(c, TestData.Bob, 1_000_000_000);
+
+        // alice posts a hedge; bob commits + reveals 1M @ 600.
+        var post = c.PostRequest(TestData.Alice, Hash.NormalizeBytes32("0x99"), RfmSide.Yes, 1_000_000, 700, 200_000, t + 100, t + 200, new TxCtx { BlockNumber = 2, TxHash = "0xp" });
+        Assert.True(post.Success);
+
+        const long salt = 42;
+        var commitHash = Hash.QuoteHash(5042002, TestData.Rfm, 1, TestData.Bob, 600, 1_000_000, salt);
+        Assert.True(c.CommitQuote(TestData.Bob, 1, commitHash, new TxCtx { BlockNumber = 3, TxHash = "0xc" }).Success);
+
+        c.NowOverride = t + 150; // past commitDeadline, inside reveal window
+        Assert.True(c.RevealQuote(TestData.Bob, 1, 600, 1_000_000, salt, new TxCtx { BlockNumber = 4, TxHash = "0xr" }).Success);
+
+        c.NowOverride = t + 300; // past revealDeadline -> finalize
+        var finalize = c.Finalize(1, new TxCtx { BlockNumber = 5, TxHash = "0xf" });
+        Assert.True(finalize.Success, $"finalize failed: {finalize.Revert?.ErrorName}");
+        Assert.Contains(finalize.Events, e => e is MarketBorn);
+
+        // FUNDING WAS ACTUALLY PAID: alice's escrow (1M*600/1000 = 600k) and bob's counter-leg
+        // (1M - 600k = 400k) left their internal balances into the pool. Free = usdcBal - lockedBal
+        // = usdcBal here (all locks consumed/released).
+        Assert.Equal(new BigInteger(1_000_000_000 - 600_000), c.UsdcOf(TestData.Alice));
+        Assert.Equal(new BigInteger(1_000_000_000 - 400_000), c.UsdcOf(TestData.Bob));
+
+        // born allocations: institution holds YES, winner MM holds NO.
+        var marketId = Hash.KeccakHex(Hash.EncodeAddress(TestData.Rfm), Hash.EncodeUint256(1));
+        Assert.Equal(new BigInteger(1_000_000), c.TokenOf(TestData.Alice, Assets.TokenId(marketId, Outcome.Yes)));
+        Assert.Equal(new BigInteger(1_000_000), c.TokenOf(TestData.Bob, Assets.TokenId(marketId, Outcome.No)));
+    }
+
     private static string TradeId(int i) => Hash.NormalizeBytes32("0x" + (1000 + i).ToString("x"));
 
     [Fact]
