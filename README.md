@@ -44,3 +44,7 @@ Trading and collateral are denominated in USDC end to end.
 ## Status
 
 Early build for the Arc Programmable Money hackathon. Architecture is specified and audited; implementation is in progress. This is a scoped, from-scratch build, not a fork of any production system.
+
+## Known Limitations
+
+- **We use a separate mock ERC-20 as USDC.** On Arc testnet the native gas is tied to the system USDC (the same asset is both the gas token and the ERC-20 at `0x3600...0000`), issued by Circle and not mintable to our needs. Since we cannot mint it to fund positions at meaningful size, the venue trades a self-deployed mock ERC-20 USDC (6-dec) as its collateral token. Gas is still paid in real Arc USDC. The contracts take a USDC-address parameter, so pointing collateral at the real `0x3600` USDC is a one-line change.
