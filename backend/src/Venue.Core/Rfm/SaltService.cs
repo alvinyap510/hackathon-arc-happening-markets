@@ -8,8 +8,11 @@ namespace Venue.Rfm;
 /// MM's 500 USDC bond is slashed. Server-generated salts are therefore DERIVED
 /// deterministically from a server secret + (requestId, user), so a reveal after a backend
 /// restart reconstructs the exact committed salt with no in-memory store. A client-supplied
-/// salt still wins (the client holds it). The secret is read from config/env — set
-/// `Venue:SaltSecret` for durability across restarts.
+/// salt still wins (the client holds it).
+///
+/// The secret MUST be stable across restarts — the service FAILS FAST at startup when
+/// `Venue:SaltSecret` is unset rather than silently regenerating a secret that would make
+/// every prior commit unrevealable after a restart.
 /// </summary>
 public sealed class SaltService
 {
@@ -17,9 +20,10 @@ public sealed class SaltService
 
     public SaltService(string? secret)
     {
-        _secret = string.IsNullOrWhiteSpace(secret)
-            ? System.Security.Cryptography.RandomNumberGenerator.GetBytes(32) // demo-only: regenerates on restart
-            : System.Text.Encoding.UTF8.GetBytes(secret);
+        if (string.IsNullOrWhiteSpace(secret))
+            throw new InvalidOperationException(
+                "Venue:SaltSecret is required (env Venue__SaltSecret): the RFM commit salt is derived from it and must survive restarts, or a restart would slash committed MM bonds.");
+        _secret = System.Text.Encoding.UTF8.GetBytes(secret);
     }
 
     /// <summary>Deterministic salt for (requestId, user) — identical before and after a restart.</summary>

@@ -83,6 +83,15 @@ public class RfmCoordinatorTests
         Assert.Equal(commitHash, revealHash);
     }
 
+    [Fact]
+    public void SaltService_EmptySecret_FailsFast()
+    {
+        // Refusing to boot without a stable secret is the durable-by-construction guarantee:
+        // a randomly generated secret would change on restart and make every commit unrevealable.
+        Assert.Throws<InvalidOperationException>(() => new SaltService(""));
+        Assert.Throws<InvalidOperationException>(() => new SaltService("   "));
+    }
+
     private static string Market(int n) => Hash.NormalizeBytes32("0x" + n.ToString("x"));
 
     private sealed class RecordingGateway : IChainGateway
