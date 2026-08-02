@@ -61,10 +61,10 @@ export default function RfmForm({ onPosted }: { onPosted: (r: RfmRequest) => voi
     <form onSubmit={submit} className="panel p-5">
       <h3 className="font-display text-lg font-semibold text-paper-100">Request a market</h3>
       <p className="mt-1 text-xs text-ink-400">
-        Post a hedge. Market makers answer with sealed, bonded quotes. Commit 2 min · reveal 1 min (demo preset).
+        Makers answer with sealed, bonded quotes. Commit 2 min · reveal 1 min.
       </p>
 
-      <label className="label-caps mt-4 block">Event question</label>
+      <label className="label-caps mt-4 block">Question</label>
       <input className="input mt-1" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Will the ECB cut rates before March 2027?" />
 
       <div className="mt-3 grid grid-cols-2 gap-2">
@@ -79,7 +79,7 @@ export default function RfmForm({ onPosted }: { onPosted: (r: RfmRequest) => voi
       </div>
 
       <div className="mt-3">
-        <label className="label-caps">Hedge side (the outcome you buy)</label>
+        <label className="label-caps">You buy</label>
         <div className="mt-1 grid grid-cols-2 gap-1 rounded-lg bg-ink-900 p-1">
           {(["YES", "NO"] as OutcomeSide[]).map((s) => (
             <button
@@ -110,37 +110,37 @@ export default function RfmForm({ onPosted }: { onPosted: (r: RfmRequest) => voi
           <input className="input num mt-1" value={minMatch} onChange={(e) => setMinMatch(e.target.value)} />
         </div>
         <div>
-          <label className="label-caps">Max price (tick)</label>
+          <label className="label-caps">Max price</label>
           <input className="input num mt-1" value={maxPrice} onChange={(e) => setMaxPrice(e.target.value.replace(/\D/g, "").slice(0, 3))} />
         </div>
       </div>
 
       <div className="mt-4 space-y-1 rounded-lg border border-gold-600/40 bg-gold-900/20 p-3 text-xs">
         <div className="flex justify-between text-paper-300">
-          <span>Escrow locked at post</span>
+          <span>Escrow</span>
           <span className="num text-gold-300">{escrow === null ? "—" : `${formatUsdc(escrow.toString())} USDC`}</span>
         </div>
         <div className="flex justify-between text-paper-300">
-          <span>Your bond (slashes if you grief)</span>
+          <span>Bond</span>
           <span className="num text-gold-300">500 USDC</span>
         </div>
         <div className="flex justify-between border-t border-gold-600/30 pt-1 font-semibold text-paper-100">
-          <span>Total committed</span>
+          <span>Total</span>
           <span className="num">{total === null ? "—" : `${formatUsdc(total.toString())} USDC`}</span>
         </div>
         <div className="flex justify-between text-[11px] text-ink-400">
-          <span>Available venue balance</span>
+          <span>Available</span>
           <span className="num">{balances ? formatUsdc(balances.available) : "0"} USDC</span>
         </div>
       </div>
 
       {!enough && total !== null && (
-        <p className="mt-2 text-[11px] text-no-400">Balance too low. Fund via the Faucet tab, then deposit.</p>
+        <p className="mt-2 text-[11px] text-no-400">Low balance. Top up in Faucet.</p>
       )}
       {error && <p className="mt-2 text-xs text-no-400">{error}</p>}
 
       <button type="submit" disabled={busy || !enough} className="btn-gold mt-4 w-full">
-        {busy ? "Posting on chain…" : "Post request · lock escrow + bond"}
+        {busy ? "Posting on chain…" : "Post request"}
       </button>
 
       {postedTx && (

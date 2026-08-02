@@ -5,9 +5,9 @@ import { formatUsdc, shortAddr } from "../lib/format";
 export type Tab = "markets" | "rfm" | "faucet";
 
 const TABS: { id: Tab; label: string; hint: string }[] = [
-  { id: "markets", label: "Markets", hint: "Trade the live books" },
-  { id: "rfm", label: "Request a Market", hint: "Originate via sealed auction" },
-  { id: "faucet", label: "Faucet", hint: "Fund your wallet" },
+  { id: "markets", label: "Markets", hint: "Live books" },
+  { id: "rfm", label: "Request a Market", hint: "Sealed auction" },
+  { id: "faucet", label: "Faucet", hint: "Demo USDC" },
 ];
 
 export default function Layout({
@@ -89,8 +89,7 @@ export default function Layout({
             </div>
           </div>
           <p className="px-1 text-[10px] leading-relaxed text-ink-500">
-            Deposits, withdrawals, RFM escrow and redemptions are on chain from your wallet. Trades settle
-            via the operator batch.
+            All funds move on chain. Gas sponsored.
           </p>
         </div>
       </aside>

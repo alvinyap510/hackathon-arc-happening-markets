@@ -26,8 +26,7 @@ export default function Login() {
             Happening <span className="prism-text">RFM</span>
           </h1>
           <p className="mt-3 max-w-sm text-sm leading-relaxed text-ink-300">
-            Prediction markets born from committed institutional demand. Sealed quotes, escrowed bonds,
-            and a market that opens already funded and priced.
+            Sealed quotes. Committed demand. Markets born funded.
           </p>
         </div>
 
@@ -49,7 +48,7 @@ export default function Login() {
             {busy ? "Creating your wallet…" : "Continue"}
           </button>
           <p className="mt-4 text-center text-xs leading-relaxed text-ink-400">
-            A Circle smart wallet is created for you behind this email. No seed phrase, no gas.
+            Email is your wallet. No seed phrase, no gas.
           </p>
         </form>
 

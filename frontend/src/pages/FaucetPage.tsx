@@ -30,17 +30,14 @@ export default function FaucetPage() {
     <div className="mx-auto max-w-2xl animate-rise">
       <header className="mb-6">
         <h2 className="font-display text-3xl font-semibold text-paper-100">Faucet</h2>
-        <p className="mt-1 text-sm text-ink-300">
-          Fund your smart wallet with demo collateral, then deposit to the venue. Gas is sponsored, so there
-          is no "get gas" step.
-        </p>
+        <p className="mt-1 text-sm text-ink-300">Mint demo USDC, deposit, trade.</p>
       </header>
 
       <div className="space-y-4">
         <div className="panel p-5">
           <div className="flex items-center justify-between">
             <div>
-              <div className="label-caps">Wallet balance (MockUSDC)</div>
+              <div className="label-caps">Wallet</div>
               <div className="num mt-1 text-2xl font-semibold text-paper-100">
                 {wallet === null ? "—" : formatUsdc(wallet)} <span className="text-sm text-ink-400">USDC</span>
               </div>
@@ -49,15 +46,11 @@ export default function FaucetPage() {
               {busy === "mint" ? "Minting…" : "Mint 10,000 USDC"}
             </button>
           </div>
-          <p className="mt-3 text-[11px] leading-relaxed text-ink-500">
-            Demo collateral is a self-deployed 6-dec mock: real Arc system USDC is not mintable to demo size.
-            The contracts take a USDC address parameter, so production points at the real face with one line.
-          </p>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2">
           <div className="panel p-5">
-            <div className="label-caps">Deposit to venue</div>
+            <div className="label-caps">Deposit</div>
             <div className="mt-2 flex gap-2">
               <input className="input num" value={depAmt} onChange={(e) => setDepAmt(e.target.value)} />
               <button
@@ -74,7 +67,7 @@ export default function FaucetPage() {
             </div>
           </div>
           <div className="panel p-5">
-            <div className="label-caps">Withdraw to wallet</div>
+            <div className="label-caps">Withdraw</div>
             <div className="mt-2 flex gap-2">
               <input className="input num" value={wdrAmt} onChange={(e) => setWdrAmt(e.target.value)} />
               <button

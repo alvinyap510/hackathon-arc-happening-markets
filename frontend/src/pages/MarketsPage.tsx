@@ -23,9 +23,6 @@ export default function MarketsPage({
     <div className="mx-auto max-w-5xl animate-rise">
       <header className="mb-6">
         <h2 className="font-display text-3xl font-semibold text-paper-100">Markets</h2>
-        <p className="mt-1 text-sm text-ink-300">
-          Live order books. Markets born from sealed RFM auctions arrive funded and priced.
-        </p>
       </header>
 
       <div className="grid gap-4 md:grid-cols-2">

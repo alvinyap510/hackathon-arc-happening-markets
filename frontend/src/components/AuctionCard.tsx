@@ -104,7 +104,7 @@ export default function AuctionCard({
                 {request.commitCount} sealed quote{request.commitCount === 1 ? "" : "s"} committed
               </div>
               <div className="num text-xs text-gold-300">{request.commitCount * 500} USDC in bonds escrowed</div>
-              <div className="text-[11px] text-ink-500">Quotes are hash commitments. Nobody sees a price until reveal.</div>
+              <div className="text-[11px] text-ink-500">Prices stay sealed until reveal.</div>
             </div>
           </div>
         </div>
@@ -131,8 +131,7 @@ export default function AuctionCard({
             </div>
           ))}
           <p className="pt-1 text-[11px] text-ink-500">
-            {request.commitCount - reveals.length} commitment{request.commitCount - reveals.length === 1 ? "" : "s"} still sealed.
-            Unrevealed bonds slash at the deadline.
+            {request.commitCount - reveals.length} still sealed. Unrevealed bonds slash.
           </p>
         </div>
       )}
@@ -162,17 +161,15 @@ export default function AuctionCard({
               {final.slashed.map((s) => shortAddr(s.mm)).join(", ")} · {formatUsdc((BigInt(final.slashCount) * 500_000_000n).toString(), 0)} USDC → institution
             </span>
           </div>
-          {!born && (
-            <p className="mt-3 text-center text-xs text-ink-400">Pay-as-bid: each maker fills at its own quote. Locking collateral…</p>
-          )}
+          {!born && <p className="mt-3 text-center text-xs text-ink-400">Locking collateral…</p>}
         </div>
       )}
 
       {terminalBad && (
         <div className="mt-6 rounded-lg border border-ink-600 bg-ink-900 px-4 py-3 text-sm text-ink-300 animate-rise">
           {request.phase === "FAILED"
-            ? "Auction failed: revealed quotes did not clear the minimum match. Escrow and bonds returned."
-            : "Request cancelled before any commitment. Escrow and bond returned."}
+            ? "Auction failed: minimum match not met. Escrow and bonds returned."
+            : "Cancelled before any commitment. Escrow and bond returned."}
         </div>
       )}
 

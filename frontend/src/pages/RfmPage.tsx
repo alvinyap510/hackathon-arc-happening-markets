@@ -36,10 +36,7 @@ export default function RfmPage({ onOpenMarket }: { onOpenMarket: (id: string) =
     <div className="mx-auto max-w-6xl animate-rise">
       <header className="mb-6">
         <h2 className="font-display text-3xl font-semibold text-paper-100">Request a Market</h2>
-        <p className="mt-1 max-w-2xl text-sm text-ink-300">
-          Institutions post hedges; market makers answer with sealed, bonded quotes. The winning quotes lock
-          collateral and the market is born funded and priced. This auction runs on chain.
-        </p>
+        <p className="mt-1 text-sm text-ink-300">Institutional hedges, priced by sealed auction.</p>
       </header>
 
       <div className="grid gap-6 lg:grid-cols-[340px_1fr]">
