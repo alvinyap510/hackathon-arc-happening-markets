@@ -49,8 +49,10 @@ public sealed record BookSnapshot(
     IReadOnlyList<BookLevel> NoAsks);
 
 /// <summary>A position on one market/outcome. Carries the marketId + outcome alongside the
-/// keccak tokenId (which the frontend cannot reverse) so clients map directly (SEAM 3).</summary>
-public sealed record PositionBalance(string TokenId, string MarketId, Outcome Outcome, BigInteger Amount);
+/// keccak tokenId (which the frontend cannot reverse) so clients map directly (SEAM 3).
+/// `Reserved` is the amount committed to the user's own open SELL orders on this token —
+/// the off-chain venue reservation (asset-scoped; distinct from the USDC `Reserved`).</summary>
+public sealed record PositionBalance(string TokenId, string MarketId, Outcome Outcome, BigInteger Amount, BigInteger Reserved);
 
 public sealed record UserBalances(
     string User,

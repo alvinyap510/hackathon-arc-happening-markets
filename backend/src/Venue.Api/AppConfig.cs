@@ -22,6 +22,7 @@ public sealed class AppConfig
     public required int CommitSeconds { get; init; }
     public required int RevealSeconds { get; init; }
     public required string SaltSecret { get; init; }
+    public required string Version { get; init; }
     public required string MetadataStorePath { get; init; }
     public required IReadOnlyList<SeedMarket> SeedMarkets { get; init; }
     public required bool SeedMarketsEnabled { get; init; }
@@ -74,6 +75,7 @@ public sealed class AppConfig
             CommitSeconds = cfg.GetValue<int?>("Venue:RfmWindows:CommitSeconds") ?? 120,
             RevealSeconds = cfg.GetValue<int?>("Venue:RfmWindows:RevealSeconds") ?? 60,
             SaltSecret = cfg["Venue:SaltSecret"] ?? "",
+            Version = cfg["Venue:Version"] ?? "unknown",
             MetadataStorePath = cfg["Venue:MetadataStorePath"] ?? "data/market-metadata.json",
             SeedMarketsEnabled = cfg.GetValue<bool?>("Venue:SeedMarketsEnabled") ?? true,
             CorsAllowedOrigins = (cfg["Venue:Cors:AllowedOrigins"] ?? "")

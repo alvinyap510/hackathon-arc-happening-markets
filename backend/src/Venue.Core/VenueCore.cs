@@ -343,8 +343,8 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
                 var no = Assets.TokenId(m, Outcome.No);
                 var y = _ledger.Position(u, yes);
                 var n = _ledger.Position(u, no);
-                if (y > 0) outList.Add(new PositionBalance(yes, m, Outcome.Yes, y));
-                if (n > 0) outList.Add(new PositionBalance(no, m, Outcome.No, n));
+                if (y > 0) outList.Add(new PositionBalance(yes, m, Outcome.Yes, y, _ledger.Reserved(u, yes)));
+                if (n > 0) outList.Add(new PositionBalance(no, m, Outcome.No, n, _ledger.Reserved(u, no)));
                 return outList;
             }).ToList();
             var free = _ledger.ChainFree(u);

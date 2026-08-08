@@ -67,7 +67,7 @@ public static class UserEndpoints
                 chainFree = b.ChainFree.ToString(),
                 reserved = b.Reserved.ToString(),
                 available = b.Available.ToString(),
-                positions = b.Positions.Select(p => new { tokenId = p.TokenId, marketId = p.MarketId, outcome = p.Outcome.ToString().ToLowerInvariant(), amount = p.Amount.ToString() }).ToList(),
+                positions = b.Positions.Select(p => new { tokenId = p.TokenId, marketId = p.MarketId, outcome = p.Outcome.ToString().ToLowerInvariant(), amount = p.Amount.ToString(), reserved = p.Reserved.ToString() }).ToList(),
             });
         });
 

@@ -100,6 +100,23 @@ public class VenueCoreTests
     }
 
     [Fact]
+    public async Task Balances_ExposePerTokenReservation_ForRestingSell()
+    {
+        var core = await SeedMarketAsync(NewCore());
+        await core.PlaceOrderAsync(new OrderRequest(TestData.Alice, Market, Outcome.Yes, OrderSide.Sell, 100_000, 600, OrderType.Limit, "s1", null));
+
+        var bal = await core.GetBalancesAsync(TestData.Alice);
+        var yesPos = bal.Positions.Single(p => p.MarketId == Market && p.Outcome == Outcome.Yes);
+        Assert.Equal(new BigInteger(10_000_000), yesPos.Amount);      // raw ledger position unchanged
+        Assert.Equal(new BigInteger(100_000), yesPos.Reserved);       // asset-scoped SELL reservation
+
+        // Cancelling releases the per-token reservation (available in the API payload).
+        await core.CancelOrderAsync("o_s1");
+        var after = await core.GetBalancesAsync(TestData.Alice);
+        Assert.Equal(BigInteger.Zero, after.Positions.Single(p => p.MarketId == Market && p.Outcome == Outcome.Yes).Reserved);
+    }
+
+    [Fact]
     public async Task ReservedButNotBornMarket_RejectsAtIntake()
     {
         var core = NewCore();
