@@ -24,6 +24,7 @@ using System.Numerics;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using Nethereum.ABI.FunctionEncoding;
 using Nethereum.ABI.FunctionEncoding.Attributes;
 using Nethereum.Contracts;
 using Nethereum.Hex.HexTypes;
@@ -49,7 +50,7 @@ public static class Program
 
     static readonly string NativeGasPerAccount = "4000000000000000000"; // 4 native USDC (18-dec)
     const string Mint10K = "10000000000";    // 10,000 MockUSDC per account (6-dec)
-    const string Deposit5K = "5000000000";   // 5,000 MockUSDC deposited
+    internal const string Deposit5K = "5000000000";   // 5,000 MockUSDC deposited
     const string Qty1000 = "1000000000";     // RFM quantity 1,000
     const string MinMatch200 = "200000000";  // RFM minMatch 200
     const long MaxTick = 600;                // RFM max price tick
@@ -108,10 +109,30 @@ public static class Program
             "0x0000000000000000000000000000000000000006");
         Chain = new ChainQueries(new Web3(new Account("0x" + new string('1', 64)), "http://localhost:8545"), Addrs);
 
-        Console.WriteLine("== decodecheck: settleBatch calldata decode ==");
+        Console.WriteLine("== decodecheck: settleBatch calldata decode (Nethereum-encoded fixture) ==");
         var tradeId = "0x" + "aa".PadRight(64, '0');
         var marketId = "0x" + "bb".PadRight(64, '0');
-        var calldata = "0x" + BuildSettleBatch(tradeId, marketId, cls: 1, outcome: 0, partyA: "0x10000000000000000000000000000000000000a1", partyB: "0x10000000000000000000000000000000000000b2", tick: 600, size: "2000000000");
+        var fixture = new SettleBatchFunction
+        {
+            BatchId = HexBytes(marketId),
+            Trades = new List<TradeStructDto>
+            {
+                new()
+                {
+                    TradeId = HexBytes(tradeId), MarketId = HexBytes(marketId),
+                    Class = 1, Outcome = 0,
+                    PartyA = "0x10000000000000000000000000000000000000a1",
+                    PartyB = "0x10000000000000000000000000000000000000b2",
+                    Tick = 600, Size = BigInteger.Parse("2000000000"),
+                },
+            },
+        };
+        var calldata = "0x" + Convert.ToHexStringLower(fixture.GetCallData());
+        // External anchor: the DTO-derived selector must equal the canonical settleBatch signature
+        // selector. This is what prevents a wrong DTO signature from self-validating through its own
+        // encoder (reviewer finding R2-1: derive from the DTO, then anchor against the known hash).
+        Require(calldata[2..10].Equals("768b5d2e", StringComparison.OrdinalIgnoreCase),
+            "derived settleBatch selector " + calldata[2..10] + " != canonical 0x768b5d2e (DTO signature drift)");
         var decoded = Chain.DecodeSettleBatch(calldata);
         Require(decoded.Count == 1, "decoded 1 trade");
         var d = decoded[0];
@@ -122,7 +143,7 @@ public static class Program
         Require(d.PartyB.Equals("0x10000000000000000000000000000000000000b2", StringComparison.OrdinalIgnoreCase), "partyB decoded");
         Require(d.Tick == 600, "tick decoded");
         Require(d.Size == BigInteger.Parse("2000000000"), "size decoded");
-        Console.WriteLine("  [PASS] settleBatch tuple decode (MINT)");
+        Console.WriteLine("  [PASS] settleBatch selector 0x768b5d2e derived from the Nethereum DTO; tuple decode (MINT)");
 
         Console.WriteLine("== decodecheck: RequestPosted topic normalization (0x-prefixed vs bare Sha3Signature) ==");
         var marketHash = "0x" + "cd".PadRight(64, '0');
@@ -134,24 +155,27 @@ public static class Program
         Require(posted.TxHash == "0xdead", "tx hash retained");
         Console.WriteLine("  [PASS] RequestPosted decoded from a 0x-prefixed receipt log");
 
+        Console.WriteLine("== decodecheck: RFM lock refs == keccak(abi.encode(...)) via Nethereum's own encoder ==");
+        var vecReq = BigInteger.Parse("1234567");
+        var vecA = "0x10000000000000000000000000000000000000a1";
+        var abi1 = new VectorFunction { R = vecReq, S = "ESCROW" }.GetCallData().Skip(4).ToArray();
+        Require("0x" + Convert.ToHexStringLower(Sha3Keccack.Current.CalculateHash(abi1)) == ChainQueries.LockRef(vecReq, "ESCROW"),
+            "LockRef(requestId,string) != keccak(Nethereum abi.encode(uint256,string))");
+        var abi2 = new Vector2Function { R = vecReq, A = vecA, S = "BOND" }.GetCallData().Skip(4).ToArray();
+        Require("0x" + Convert.ToHexStringLower(Sha3Keccack.Current.CalculateHash(abi2)) == ChainQueries.LockRef(vecReq, vecA, "BOND"),
+            "LockRef(requestId,address,string) != keccak(Nethereum abi.encode(uint256,address,string))");
+        Console.WriteLine("  [PASS] RFM lock refs match keccak(abi.encode(uint256,string)) and keccak(abi.encode(uint256,address,string)) (offsets 64/96)");
+
         Console.WriteLine();
         Console.WriteLine("DECODECHECK PASSED");
         return 0;
     }
 
-    /// <summary>Build a settleBatch(bytes32,tuple[]) calldata for one MINT trade (hand-ABI-encoded,
-    /// matching the encoding the backend's Nethereum gateway produces).</summary>
-    static string BuildSettleBatch(string tradeId, string marketId, byte cls, byte outcome, string partyA, string partyB, long tick, string size)
+    static byte[] HexBytes(string hex)
     {
-        var sel = Sha3Keccack.Current.CalculateHash("settleBatch(bytes32,tuple[])")[2..10];
-        var sb = new StringBuilder(sel);
-        sb.Append(Word(tradeId)).Append("0000000000000000000000000000000000000000000000000000000000000040")
-          .Append("0000000000000000000000000000000000000000000000000000000000000001");
-        sb.Append(Word(tradeId)).Append(Word(marketId))
-          .Append(Word((BigInteger)cls)).Append(Word((BigInteger)outcome))
-          .Append(Word(partyA)).Append(Word(partyB))
-          .Append(Word((BigInteger)tick)).Append(Word(BigInteger.Parse(size)));
-        return sb.ToString();
+        var h = hex.Trim();
+        if (h.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) h = h[2..];
+        return Convert.FromHexString(h);
     }
 
     static string Word(object value)
@@ -234,11 +258,16 @@ public static class Program
             $"driver operator {Operator.Address} != deployed OutcomeTokens.operator() {deployedOperator}");
         Pass("roles preflight + deployed operator matches manifest operator");
 
-        Step("0c. backend health, chain id agrees with the RPC's real chain");
+        Step("0c. backend health, chain id agrees with the RPC's real chain, build commit verified");
         await Api.WaitHealthyAsync(TimeSpan.FromSeconds(120));
         var health = await Api.GetAsync<HealthView>(null, "/v1/health");
         Require(health.ChainId == ArcChainId, "backend /v1/health ChainId " + health.ChainId + " != " + ArcChainId);
-        Pass("backend healthy on chain " + health.ChainId + " (matches eth_chainId)");
+        var version = await Api.GetAsync<VersionView>(null, "/v1/version");
+        var beCommit = string.IsNullOrWhiteSpace(version.Commit) ? BackendCommitOverride : version.Commit;
+        Require(!string.IsNullOrWhiteSpace(beCommit),
+            "backend /v1/version does not report a commit; set E2E_BACKEND_COMMIT to pin the verified build");
+        Evidence.BackendCommit = beCommit;
+        Pass("backend healthy on chain " + health.ChainId + "; verified build commit " + beCommit);
 
         // ---- pre-run snapshot (D8/§9): ONE pinned block, all reads at that block ----
         PreSnap = await Chain.SnapshotAsync(CollateralUsers);
@@ -269,6 +298,13 @@ public static class Program
             var deposit = await Api.PostAsync(Tokens[u.Address], "/v1/vault/deposit", new { amount = Deposit5K });
             Require(deposit.TxHash != null, "deposit tx hash for " + u.Name);
             await RecordTxAsync(deposit.TxHash!, u.Name + "-deposit", Acceptance.DepositIndexed);
+            // Recover the backend's approve-before-deposit tx hash via a narrow bounded Approval
+            // query around the deposit block (R2-6: address-level allowlists include the approval).
+            var depositBlock = (await Chain.Web3.Eth.Transactions.GetTransactionReceipt.SendRequestAsync(deposit.TxHash!))?.BlockNumber?.Value ?? await Chain.BlockNumber();
+            var approval = await Chain.FindApprovalAroundAsync(u.Address, Addrs.Vault, depositBlock);
+            Require(approval != null, "approve tx for " + u.Name + " not found near deposit block " + depositBlock);
+            await Chain.RecordReceiptAsync(approval!.Log.TransactionHash, u.Name + "-approve", Acceptance.DepositIndexed,
+                "Approval(owner=" + shortHash(u.Address) + " spender=vault value=" + Deposit5K + ")");
         }
         await WaitUntil(TimeSpan.FromSeconds(180), async () =>
         {
@@ -300,9 +336,9 @@ public static class Program
         Require(post.TxHash != null, "postRequest tx hash");
         PostTxHash = post.TxHash!;
 
-        // D2: decode RequestPosted from the post tx's OWN receipt (causally tied).
+        // D2: decode RequestPosted from the post tx's OWN receipt (causally tied). The evidence row
+        // is recorded AFTER the decode using the DECODED requestId + market (not a pre-decode guess).
         var postReceipt = await AwaitReceipt(Chain.Web3, PostTxHash, "rfm-postRequest", TimeSpan.FromSeconds(90));
-        Evidence.RecordTx("rfm-postRequest", PostTxHash, Addrs.Rfm, "success", Acceptance.RequestPosted, "RequestPosted(requestId=" + CurrentRequestId + ")");
         var posted = Chain.DecodeRequestPosted(postReceipt);
         Require(posted != null, "RequestPosted decoded from the post tx receipt");
         var requestId = posted!.RequestId;
@@ -311,6 +347,8 @@ public static class Program
             "API requestId " + post.RequestId + " != decoded requestId " + requestId + " (causal link broken)");
         Require(posted.Market.Equals(Chain.Keccak(marketLabel), StringComparison.OrdinalIgnoreCase),
             "post market commitment is keccak(marketLabel)");
+        Evidence.RecordTx("rfm-postRequest", PostTxHash, Addrs.Rfm, "success", Acceptance.RequestPosted,
+            "RequestPosted(requestId=" + requestId + " market=" + shortHash(posted.Market) + ")");
         var requestCountAfter = await Chain.RequestCount();
         Require(requestCountAfter > requestCountBefore,
             "RFM.requestCount() did not increase (" + requestCountBefore + " -> " + requestCountAfter + ")");
@@ -424,14 +462,17 @@ public static class Program
         {
             var b = await Api.GetAsync<BalancesView>(Tokens[u.Address], "/v1/balances");
             Require(BigInteger.Parse(b.Reserved) == 0, "stuck order reservation for " + u.Name);
+            // R1-2/R2-3/R2-5: the backend must also report ZERO asset-scoped (per-token) reservations
+            // — a stranded SELL would make the venue under-report a token position. /v1/balances now
+            // carries `reserved` per position; assert it is zero for every position.
+            Require(b.Positions.All(p => BigInteger.Parse(p.Reserved ?? "0") == 0),
+                "stuck token (asset-scoped) reservation for " + u.Name);
         }
-        // Token reservations: assert the venue's token positions equal the on-chain positions for
-        // the born market (any remaining sell reservation would make the backend under-report).
         await AssertPositionsAsync(Expected.Tokens("after-redeem"));
         Pass("terminal state clean: RFM locks dead, no stuck USDC or token reservations");
 
         Step("18. delta conservation (§9, block-pinned)");
-        var postSnap = await Chain.SnapshotAsync(CollateralUsers, CurrentYesId, CurrentNoId);
+        var postSnap = await Chain.SnapshotAsync(CollateralUsers, CurrentYesId, CurrentNoId, requestId);
         Evidence.PostSnapshot = postSnap;
         AssertConservation(PreSnap, postSnap);
         Pass("delta conservation reconciles");
@@ -640,6 +681,10 @@ public static class Program
             {
                 if (p.MarketId == null || p.Outcome == null || !SameHex(p.MarketId, CurrentMarketId)) continue;
                 var id = await Chain.TokenIdHex(p.MarketId!, p.Outcome!.Equals("no", StringComparison.OrdinalIgnoreCase) ? (byte)1 : (byte)0);
+                // R1-2/R2-3: a stranded SELL would surface as a nonzero asset-scoped token reservation
+                // here (the /v1/balances payload now carries reserved per position). Zero required.
+                Require(BigInteger.Parse(p.Reserved ?? "0") == 0,
+                    who.Name + " token position " + shortHash(id) + " carries nonzero reservation " + p.Reserved);
                 reported[id] = BigInteger.Parse(p.Amount);
             }
             foreach (var (id, amt) in expects)
@@ -692,6 +737,16 @@ public static class Program
         }
         foreach (var u in CollateralUsers)
             Require(await Chain.LockedBal(u.Address) == 0, "lockedBal != 0 for " + u.Name + " (stranded RFM lock)");
+        // R2-5: the SAME refs were pinned into the post-run snapshot (block-pinned evidence); the
+        // snapshot's lock rows must all be dead too, so a wrong ref cannot silently pass.
+        if (Evidence.PostSnapshot != null)
+        {
+            Require(Evidence.PostSnapshot.Locks.Count == refs.Count,
+                "post snapshot recorded " + Evidence.PostSnapshot.Locks.Count + " locks, expected " + refs.Count);
+            foreach (var (label, refHex, _, amount, live) in Evidence.PostSnapshot.Locks)
+                Require(!live && amount == 0,
+                    $"post-snapshot RFM lock {label} ({refHex}) still live amount={amount} (stranded)");
+        }
         Pass("RFM locks dead: escrow + institution bond + both MM bonds + reveal locks");
     }
 
@@ -714,6 +769,7 @@ public static class Program
         Require(poolDelta == remainingYes, "pool delta " + poolDelta + " != remaining YES supply " + remainingYes);
         foreach (var u in CollateralUsers)
             Require(postSnap.LockedBalance(u.Address) == 0, "post-run lockedBal != 0 for " + u.Name);
+        Require(postSnap.Locks.All(l => !l.Live && l.Amount == 0), "post-run snapshot shows live RFM locks");
         Require(postSnap.Block >= preSnap.Block, "snapshots pinned to blocks");
         Pass("delta conservation reconciles (snapshots at blocks " + preSnap.Block + " -> " + postSnap.Block + ")");
     }
@@ -722,10 +778,13 @@ public static class Program
 
     static async Task<string> SendContractAsync(Web3 web3, string to, FunctionMessage msg, string kind, string acceptance)
     {
-        var receipt = await web3.Eth.GetContractHandler(to).SendRequestAndWaitForReceiptAsync(msg);
-        Require(receipt?.Status?.Value == 1 && receipt.TransactionHash != null, "tx to " + to + " reverted or no receipt");
-        Evidence.RecordTx(kind, receipt!.TransactionHash!, to, "success", acceptance, "contract call");
-        return receipt.TransactionHash!;
+        // R2-1/R2-6: submit returns ONLY the hash, then we receipt-await with an explicit timeout
+        // (D3) — never a one-shot SendRequestAndWaitForReceipt that can hang the run (mints).
+        var hash = await web3.Eth.GetContractHandler(to).SendRequestAsync(msg);
+        Require(!string.IsNullOrWhiteSpace(hash), "tx to " + to + " produced no hash");
+        var receipt = await AwaitReceipt(web3, hash!, kind, TimeSpan.FromSeconds(120));
+        Evidence.RecordTx(kind, hash!, to, "success", acceptance, "contract call block=" + receipt.BlockNumber?.Value);
+        return hash!;
     }
 
     static async Task<string> SendValue(Web3 web3, string to, BigInteger value)
@@ -742,13 +801,32 @@ public static class Program
     }
 
     /// <summary>D3: every hash is receipt-awaited with an explicit timeout, then recorded with its
-    /// status/block so the evidence proves success (not just a submitted hash).</summary>
+    /// status/block AND the decoded event (deposit/commit/reveal/redeem), so the evidence proves the
+    /// on-chain effect — not just a submitted hash.</summary>
     static async Task RecordTxAsync(string txHash, string kind, string acceptance)
     {
-        await AwaitReceipt(Chain.Web3, txHash, kind, TimeSpan.FromSeconds(120));
-        var receipt = await Chain.Web3.Eth.Transactions.GetTransactionReceipt.SendRequestAsync(txHash);
-        var status = receipt?.Status?.Value == 1 ? "success" : "reverted";
-        Evidence.RecordTx(kind, txHash, receipt?.To, status, acceptance, "status=" + status + " block=" + receipt?.BlockNumber?.Value);
+        var receipt = await AwaitReceipt(Chain.Web3, txHash, kind, TimeSpan.FromSeconds(120));
+        var status = receipt.Status?.Value == 1 ? "success" : "reverted";
+        Evidence.RecordTx(kind, txHash, receipt.To, status, acceptance, DecodeSummary(kind, receipt));
+    }
+
+    /// <summary>Decode the step's relevant event from a receipt for the evidence summary.</summary>
+    static string DecodeSummary(string kind, TransactionReceipt receipt)
+    {
+        var deposited = Chain.DecodeEventFrom<DepositedEventDTO>(receipt, Addrs.Vault);
+        if (kind.EndsWith("-deposit", StringComparison.Ordinal) && deposited != null)
+            return "Deposited(user=" + shortHash(deposited.Event.User) + " amt=" + deposited.Event.Amt + ")";
+        var committed = Chain.DecodeEventFrom<QuoteCommittedEventDTO>(receipt, Addrs.Rfm);
+        if (kind.EndsWith("-commit", StringComparison.Ordinal) && committed != null)
+            return "QuoteCommitted(requestId=" + committed.Event.RequestId + " mm=" + shortHash(committed.Event.Mm) + " commitIndex=" + committed.Event.CommitIndex + ")";
+        var revealed = Chain.DecodeEventFrom<QuoteRevealedEventDTO>(receipt, Addrs.Rfm);
+        if (kind.EndsWith("-reveal", StringComparison.Ordinal) && revealed != null)
+            return "QuoteRevealed(requestId=" + revealed.Event.RequestId + " mm=" + shortHash(revealed.Event.Mm) + " tick=" + revealed.Event.Tick + " size=" + revealed.Event.Size + " inRange=" + revealed.Event.InRange + ")";
+        var redeemed = Chain.DecodeEventFrom<RedeemedEventDTO>(receipt, Addrs.Vault)
+            ?? Chain.DecodeEventFrom<RedeemedEventDTO>(receipt, Addrs.OutcomeTokens);
+        if (kind.EndsWith("-redeem", StringComparison.Ordinal) && redeemed != null)
+            return "Redeemed(user=" + shortHash(redeemed.Event.User) + " market=" + shortHash("0x" + Convert.ToHexStringLower(redeemed.Event.MarketId)) + " amt=" + redeemed.Event.Amt + ")";
+        return "status=" + (receipt.Status?.Value == 1 ? "success" : "reverted") + " block=" + receipt.BlockNumber?.Value;
     }
 
     static async Task<TransactionReceipt> AwaitReceipt(Web3 web3, string txHash, string label, TimeSpan timeout)
@@ -900,7 +978,14 @@ public sealed class ChainQueries
     static readonly string TotalSupplySel = Selector("totalSupply()");
     static readonly string RequestCountSel = Selector("requestCount()");
     static readonly string LocksSel = Selector("locks(bytes32)");
-    static readonly string SettleBatchSel = Selector("settleBatch(bytes32,tuple[])");
+    static readonly string SettleBatchSel = SettleBatchSelector();
+
+    /// <summary>settleBatch(bytes32,tuple[]) selector DERIVED from the Nethereum function DTO — the same
+    /// encoding the live decoder consumes — not a hand-typed keccak (bare 8-hex, no 0x). The
+    /// decodecheck anchors it externally against the canonical 0x768b5d2e so a wrong DTO signature
+    /// cannot self-validate.</summary>
+    static string SettleBatchSelector()
+        => Convert.ToHexStringLower(new SettleBatchFunction { BatchId = new byte[32], Trades = new List<TradeStructDto>() }.GetCallData())[..8];
 
     public ChainQueries(Web3 web3, Program.Addresses addresses)
     {
@@ -993,10 +1078,12 @@ public sealed class ChainQueries
     }
 
     // RFM refs mirror RFM.sol: keccak256(abi.encode(...)). abi.encode of a dynamic string is
-    // [offset][len][padded], so the preimage for (uint256, string) is [r][offset=32][len][padded]
-    // and for (uint256, address, string) is [r][addr][offset=64][len][padded].
-    static string LockRef(BigInteger requestId, string tag) => Keccak(EncodeU256(requestId), EncodeU256(32), EncodeStringAbi(tag));
-    static string LockRef(BigInteger requestId, string address, string tag) => Keccak(EncodeU256(requestId), EncodeAddress(address), EncodeU256(64), EncodeStringAbi(tag));
+    // [offset][len][padded]. For (uint256, string) the head is two 32-byte words so the tail begins
+    // at byte 64 -> preimage [r][offset=64][len][padded]; for (uint256, address, string) the head is
+    // three words so the tail begins at byte 96 -> [r][addr][offset=96][len][padded]. Both are
+    // verified against Nethereum's own encoder in the decodecheck.
+    internal static string LockRef(BigInteger requestId, string tag) => Keccak(EncodeU256(requestId), EncodeU256(64), EncodeStringAbi(tag));
+    internal static string LockRef(BigInteger requestId, string address, string tag) => Keccak(EncodeU256(requestId), EncodeAddress(address), EncodeU256(96), EncodeStringAbi(tag));
 
     internal string Keccak(string s) => Keccak(Encoding.UTF8.GetBytes(s));
 
@@ -1048,7 +1135,7 @@ public sealed class ChainQueries
     public IReadOnlyList<DecodedTrade> DecodeSettleBatch(string inputHex)
     {
         var h = inputHex.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? inputHex[2..] : inputHex;
-        RequireField(h.Length >= 8 && h[..8].Equals(SettleBatchSel[2..], StringComparison.OrdinalIgnoreCase), "calldata is settleBatch");
+        RequireField(h.Length >= 8 && h[..8].Equals(SettleBatchSel, StringComparison.OrdinalIgnoreCase), "calldata is settleBatch");
         var trades = new List<DecodedTrade>();
         var offsetWords = (int)BigInteger.Parse("0" + h.Substring(72, 64), System.Globalization.NumberStyles.HexNumber);
         var arrayStart = 8 + offsetWords * 2; // hex chars: 8-byte selector + offset bytes * 2
@@ -1086,6 +1173,46 @@ public sealed class ChainQueries
             if (decoded == null) return null;
             var e = decoded.Event;
             return new Program.RequestPostedDecoded(e.RequestId, "0x" + Convert.ToHexStringLower(e.Market), log.TransactionHash);
+        }
+        return null;
+    }
+
+    /// <summary>Decode the first log of the given event emitted by a specific contract from a receipt
+    /// (topic-0x-normalized, same bare-Sha3Signature handling as DecodeRequestPosted).</summary>
+    public EventLog<T>? DecodeEventFrom<T>(TransactionReceipt receipt, string address) where T : IEventDTO, new()
+    {
+        if (receipt.Logs == null) return null;
+        var topic0 = Event<T>.GetEventABI().Sha3Signature; // bare
+        foreach (var log in receipt.Logs)
+        {
+            if (!log.Address.Equals(address, StringComparison.OrdinalIgnoreCase)) continue;
+            var logTopic = log.Topics.Length > 0 ? Strip0x(log.Topics[0]) : null;
+            if (logTopic == null || !logTopic.Equals(topic0, StringComparison.OrdinalIgnoreCase)) continue;
+            return Event<T>.DecodeEvent(log);
+        }
+        return null;
+    }
+
+    /// <summary>Narrow bounded eth_getLogs for the MockUSDC Approval(owner->spender) that precedes a
+    /// deposit (the backend's approve-before-deposit), so the evidence carries the approval hash.</summary>
+    public async Task<EventLog<ApprovalEventDTO>?> FindApprovalAroundAsync(string owner, string spender, BigInteger observedBlock)
+    {
+        var topic0 = "0x" + Event<ApprovalEventDTO>.GetEventABI().Sha3Signature;
+        var topic1 = "0x" + A32(owner);
+        foreach (var window in new[] { 6, 15, 30 })
+        {
+            var from = observedBlock - window;
+            var to = observedBlock + window;
+            if (from < 0) from = 0;
+            var logs = await GetLogsAsync(_a.Usdc, topic0, topic1, from, to);
+            foreach (var log in logs)
+            {
+                var ev = Event<ApprovalEventDTO>.DecodeEvent(log);
+                if (ev == null) continue;
+                if (ev.Event.Spender.Equals(spender, StringComparison.OrdinalIgnoreCase)
+                    && ev.Event.Value >= BigInteger.Parse(Program.Deposit5K))
+                    return ev;
+            }
         }
         return null;
     }
@@ -1134,7 +1261,7 @@ public sealed class ChainQueries
 
     // ---- block-pinned snapshot (§9) ----
 
-    internal async Task<Snapshot> SnapshotAsync(IReadOnlyList<Program.Role> roles, string? yesId = null, string? noId = null)
+    internal async Task<Snapshot> SnapshotAsync(IReadOnlyList<Program.Role> roles, string? yesId = null, string? noId = null, BigInteger? requestId = null)
     {
         var block = await BlockNumber();
         var blockTag = "0x" + block.ToString("x");
@@ -1149,6 +1276,16 @@ public sealed class ChainQueries
             s.Locked[r.Address] = await CallAt(_a.Vault, LockedBalSel + A32(r.Address), blockTag);
             if (yesId != null) s.Tokens[(r.Address, yesId)] = await CallAt(_a.Vault, TokenBalSel + A32(r.Address) + U256(HexToU256(yesId)), blockTag);
             if (noId != null) s.Tokens[(r.Address, noId)] = await CallAt(_a.Vault, TokenBalSel + A32(r.Address) + U256(HexToU256(noId)), blockTag);
+        }
+        // RFM lock refs pinned to the same block (R2-5): the evidence carries the exact refs, and the
+        // terminal assert proves the ones we watched (escrow, bonds, reveal) are dead.
+        if (requestId != null)
+        {
+            foreach (var (label, refHex) in RfmLockRefs(requestId.Value))
+            {
+                var lk = await LockInfo(refHex);
+                s.Locks.Add((label, refHex, lk.User, lk.Amount, lk.Live));
+            }
         }
         return s;
     }
@@ -1207,6 +1344,7 @@ public sealed class Snapshot
     public Dictionary<string, BigInteger> Usdc = new();
     public Dictionary<string, BigInteger> Locked = new();
     public Dictionary<(string, string), BigInteger> Tokens = new();
+    public List<(string Label, string RefHex, string User, BigInteger Amount, bool Live)> Locks = new();
 
     public BigInteger MockWalletBalance(string a) => MockWallet.GetValueOrDefault(a);
     public BigInteger UsdcBalance(string a) => Usdc.GetValueOrDefault(a);
@@ -1234,6 +1372,7 @@ public sealed class EvidenceBundle
     public Snapshot? PreSnapshot;
     public Snapshot? PostSnapshot;
     public string? Transcript;
+    public string BackendCommit = "";
     public DateTimeOffset StartedAt = DateTimeOffset.UtcNow;
 
     public void RecordTx(string kind, string hash, string? to, string status, string acceptance, string eventSummary)
@@ -1252,8 +1391,7 @@ public sealed class EvidenceBundle
             sb.AppendLine();
             sb.AppendLine("Run started (UTC): " + StartedAt.ToString("yyyy-MM-dd HH:mm:ss"));
             sb.AppendLine("Driver/backend commit: " + GitCommit() + " (submission monorepo HEAD)");
-            var be = Program.BackendCommitOverride;
-            sb.AppendLine("Backend build commit (E2E_BACKEND_COMMIT): " + (be == "" ? "unset - same monorepo HEAD as above" : be));
+            sb.AppendLine("Backend build commit (VERIFIED via /v1/version): " + (BackendCommit == "" ? "UNVERIFIED - set E2E_BACKEND_COMMIT" : BackendCommit));
             sb.AppendLine("Target: chain " + Program.ArcChainId + " RPC " + Program.Rpc);
             sb.AppendLine();
             sb.AppendLine("## Transactions");
@@ -1295,6 +1433,12 @@ public sealed class EvidenceBundle
             var locked = s.Locked.GetValueOrDefault(a);
             var tokens = string.Join(", ", s.Tokens.Where(kv => kv.Key.Item1 == a).Select(kv => shortHash(kv.Key.Item2) + "=" + kv.Value));
             sb.AppendLine($"  wallet {a}: mockUSDC={mock} usdcBal={usdc} lockedBal={locked} tokens[{tokens}]");
+        }
+        if (s.Locks.Count > 0)
+        {
+            sb.AppendLine("  RFM lock refs (pinned block):");
+            foreach (var (lockLabel, refHex, user, amount, live) in s.Locks)
+                sb.AppendLine($"    {lockLabel} {refHex}: user={shortHash(user)} amount={amount} live={live}");
         }
     }
 
@@ -1398,11 +1542,12 @@ public sealed class ApiClient(string baseUrl)
 }
 
 public sealed record HealthView(bool Ok, bool Simulate, string ChainId);
+public sealed record VersionView(string? Commit);
 public sealed record BindResp(string? Token, string? Address);
 public sealed record PostResp(string? TxHash, string? RequestId, string? Error, List<FillView>? Fills, bool? Resolved);
 public sealed record FillView(string TradeId, string TradeClass, string Size, long PriceTick);
 public sealed record BalancesView(string User, string ChainFree, string Reserved, string Available, List<PositionView> Positions);
-public sealed record PositionView(string TokenId, string? MarketId, string? Outcome, string Amount);
+public sealed record PositionView(string TokenId, string? MarketId, string? Outcome, string Amount, string Reserved);
 public sealed record BornView(string MarketId, long MarginalYesTick, long VwapYesTick, string Filled);
 public sealed record RfmView(string Phase, string CommitDeadline, string RevealDeadline, BornView? Born);
 public sealed record MarketDetail(MarketView Market, List<TradeView> Trades);
@@ -1457,6 +1602,84 @@ public sealed class MarketResolvedEventDTO : IEventDTO
 {
     [Parameter("bytes32", "marketId", 1, true)] public byte[] MarketId { get; set; } = Array.Empty<byte>();
     [Parameter("uint8", "outcome", 2, false)] public byte Outcome { get; set; }
+}
+
+[Function("settleBatch")]
+public sealed class SettleBatchFunction : FunctionMessage
+{
+    [Parameter("bytes32", "batchId", 1)] public byte[] BatchId { get; set; } = Array.Empty<byte>();
+    [Parameter("tuple[]", "trades", 2)] public List<TradeStructDto> Trades { get; set; } = new();
+}
+
+[Struct("Trade")]
+public sealed class TradeStructDto
+{
+    [Parameter("bytes32", "tradeId", 1)] public byte[] TradeId { get; set; } = Array.Empty<byte>();
+    [Parameter("bytes32", "marketId", 2)] public byte[] MarketId { get; set; } = Array.Empty<byte>();
+    [Parameter("uint8", "class", 3)] public byte Class { get; set; }
+    [Parameter("uint8", "outcome", 4)] public byte Outcome { get; set; }
+    [Parameter("address", "partyA", 5)] public string PartyA { get; set; } = "";
+    [Parameter("address", "partyB", 6)] public string PartyB { get; set; } = "";
+    [Parameter("uint256", "outcomeTick", 7)] public BigInteger Tick { get; set; }
+    [Parameter("uint256", "size", 8)] public BigInteger Size { get; set; }
+}
+
+// Offline vectors for the RFM lock refs: getCallData() yields [4-byte selector][abi.encode(params)],
+// so skipping 4 bytes gives EXACTLY keccak256(abi.encode(...)) as RFM.sol computes it.
+[Function("__v")]
+public sealed class VectorFunction : FunctionMessage
+{
+    [Parameter("uint256", "r", 1)] public BigInteger R { get; set; }
+    [Parameter("string", "s", 2)] public string S { get; set; } = "";
+}
+
+[Function("__w")]
+public sealed class Vector2Function : FunctionMessage
+{
+    [Parameter("uint256", "r", 1)] public BigInteger R { get; set; }
+    [Parameter("address", "a", 2)] public string A { get; set; } = "";
+    [Parameter("string", "s", 3)] public string S { get; set; } = "";
+}
+
+[Event("Deposited")]
+public sealed class DepositedEventDTO : IEventDTO
+{
+    [Parameter("address", "user", 1, true)] public string User { get; set; } = "";
+    [Parameter("uint256", "amt", 2, false)] public BigInteger Amt { get; set; }
+}
+
+[Event("Redeemed")]
+public sealed class RedeemedEventDTO : IEventDTO
+{
+    [Parameter("address", "user", 1, true)] public string User { get; set; } = "";
+    [Parameter("bytes32", "marketId", 2, true)] public byte[] MarketId { get; set; } = Array.Empty<byte>();
+    [Parameter("uint256", "amt", 3, false)] public BigInteger Amt { get; set; }
+}
+
+[Event("QuoteCommitted")]
+public sealed class QuoteCommittedEventDTO : IEventDTO
+{
+    [Parameter("uint256", "requestId", 1, true)] public BigInteger RequestId { get; set; }
+    [Parameter("address", "mm", 2, true)] public string Mm { get; set; } = "";
+    [Parameter("uint256", "commitIndex", 3, false)] public BigInteger CommitIndex { get; set; }
+}
+
+[Event("QuoteRevealed")]
+public sealed class QuoteRevealedEventDTO : IEventDTO
+{
+    [Parameter("uint256", "requestId", 1, true)] public BigInteger RequestId { get; set; }
+    [Parameter("address", "mm", 2, true)] public string Mm { get; set; } = "";
+    [Parameter("uint256", "tick", 3, false)] public BigInteger Tick { get; set; }
+    [Parameter("uint256", "size", 4, false)] public BigInteger Size { get; set; }
+    [Parameter("bool", "inRange", 5, false)] public bool InRange { get; set; }
+}
+
+[Event("Approval")]
+public sealed class ApprovalEventDTO : IEventDTO
+{
+    [Parameter("address", "owner", 1, true)] public string Owner { get; set; } = "";
+    [Parameter("address", "spender", 2, true)] public string Spender { get; set; } = "";
+    [Parameter("uint256", "value", 3, false)] public BigInteger Value { get; set; }
 }
 
 public sealed class DriverAssertion(string message) : Exception(message);
