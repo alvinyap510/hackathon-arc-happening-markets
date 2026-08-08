@@ -243,6 +243,9 @@ export interface NewRfmResponse {
   txHash: string;
 }
 
+/** Wire: optional auction duration on POST /v1/rfm/requests (total; server splits 2/3 commit, 1/3 reveal). */
+export type RfmDuration = "1m" | "15m" | "1h" | "4h" | "24h";
+
 export interface NewRfmRequest {
   questionText: string;
   resolutionSource: string;
@@ -251,6 +254,7 @@ export interface NewRfmRequest {
   quantity: string;
   minMatch: string;
   maxPriceTick: number;
+  duration?: RfmDuration;
 }
 
 // ----- tx status -----

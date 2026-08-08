@@ -1,10 +1,19 @@
 import { useState, type FormEvent } from "react";
 import { useStore } from "../lib/store";
-import type { NewRfmRequest, OutcomeSide, RfmRequest } from "../lib/types";
+import type { NewRfmRequest, OutcomeSide, RfmDuration, RfmRequest } from "../lib/types";
 import { formatUsdc, parseUsdc } from "../lib/format";
 import TxLink from "./TxLink";
 
 const BOND = "500000000"; // 500 USDC, symmetric with the MM bond
+
+// Total auction length; the server splits it 2/3 commit, 1/3 reveal.
+const DURATIONS: { v: RfmDuration; label: string; split: string }[] = [
+  { v: "1m", label: "1 min", split: "commit 40 s · reveal 20 s" },
+  { v: "15m", label: "15 min", split: "commit 10 min · reveal 5 min" },
+  { v: "1h", label: "1 hr", split: "commit 40 min · reveal 20 min" },
+  { v: "4h", label: "4 hr", split: "commit 2 hr 40 min · reveal 1 hr 20 min" },
+  { v: "24h", label: "24 hr", split: "commit 16 hr · reveal 8 hr" },
+];
 
 export default function RfmForm({ onPosted }: { onPosted: (r: RfmRequest) => void }) {
   const { api, balances } = useStore();
@@ -12,6 +21,7 @@ export default function RfmForm({ onPosted }: { onPosted: (r: RfmRequest) => voi
   const [src, setSrc] = useState("");
   const [close, setClose] = useState("2026-12-31");
   const [side, setSide] = useState<OutcomeSide>("YES");
+  const [duration, setDuration] = useState<RfmDuration>("1m"); // demo-friendly: born ~1 min after posting
   const [qty, setQty] = useState("1000");
   const [minMatch, setMinMatch] = useState("500");
   const [maxPrice, setMaxPrice] = useState("620");
@@ -45,6 +55,7 @@ export default function RfmForm({ onPosted }: { onPosted: (r: RfmRequest) => voi
         quantity: qtyBase,
         minMatch: minBase,
         maxPriceTick: tick,
+        duration,
       };
       const posted = await api.postRfmRequest(req);
       setPostedTx(posted.txHash ?? null);
@@ -61,7 +72,7 @@ export default function RfmForm({ onPosted }: { onPosted: (r: RfmRequest) => voi
     <form onSubmit={submit} className="panel p-5">
       <h3 className="font-display text-lg font-semibold text-paper-100">Request a market</h3>
       <p className="mt-1 text-xs text-ink-400">
-        Makers answer with sealed, bonded quotes. Commit 2 min · reveal 1 min.
+        Makers answer with sealed, bonded quotes.
       </p>
 
       <label className="label-caps mt-4 block">Question</label>
@@ -98,6 +109,27 @@ export default function RfmForm({ onPosted }: { onPosted: (r: RfmRequest) => voi
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="mt-3">
+        <label className="label-caps">Auction duration</label>
+        <div className="mt-1 grid grid-cols-5 gap-1 rounded-lg bg-ink-900 p-1">
+          {DURATIONS.map((d) => (
+            <button
+              type="button"
+              key={d.v}
+              onClick={() => setDuration(d.v)}
+              className={`rounded-md px-1 py-1.5 text-xs font-semibold ${
+                duration === d.v ? "bg-gold-500/20 text-gold-300" : "text-ink-400 hover:text-paper-200"
+              }`}
+            >
+              {d.label}
+            </button>
+          ))}
+        </div>
+        <p className="mt-1 text-[11px] text-ink-400">
+          {DURATIONS.find((d) => d.v === duration)?.split}
+        </p>
       </div>
 
       <div className="mt-3 grid grid-cols-3 gap-2">
