@@ -12,10 +12,12 @@ namespace Venue.Indexing;
 /// </summary>
 public sealed class EventIndexer
 {
-    /// <summary>Max blocks fetched per eth_getLogs call - a sane span for public RPCs that
-    /// enforce a maximum range (2000 is comfortably inside Arc's public-RPC limit; catch-up
-    /// across successive polls covers larger gaps).</summary>
-    private const ulong MaxBlockSpan = 2000;
+    /// <summary>Max blocks fetched per eth_getLogs call. Default 2000 is comfortably inside Arc's
+    /// public-RPC limit; override via Venue__Indexer__MaxBlockSpan for rate-limited/paid RPCs that
+    /// cap the range (e.g. Alchemy free tier = 10 blocks/call, so set 10 there and it still
+    /// catches up across successive polls without hitting the rate limit).</summary>
+    private static readonly ulong MaxBlockSpan =
+        ulong.TryParse(Environment.GetEnvironmentVariable("Venue__Indexer__MaxBlockSpan"), out var _m) && _m > 0 ? _m : 2000;
 
     private const int MaxBackoffMs = 30_000;
     private const int InitialBackoffMs = 1_000;
