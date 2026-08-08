@@ -65,7 +65,23 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
     /// <summary>Replay from the deploy block, then start the indexer, batcher and RFM crank.</summary>
     public async Task StartAsync(CancellationToken ct)
     {
-        await _indexer.ReplayAsync(ct);
+        // The replay is resilient (backoff inside EventIndexer.ReplayAsync) and normally
+        // completes before we return. If it STILL fails for an unexpected reason, do NOT let
+        // it take the whole service down: the poll loop retries and catches up, and the API
+        // serves on the (partial) ledger meanwhile. The ledger is a cache - the Vault is the
+        // solvency guard, so a stale indexer is safe, not fatal.
+        try
+        {
+            await _indexer.ReplayAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"indexer: initial replay failed: {ex.Message}; continuing - poll loop will catch up");
+        }
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _loops = Task.Run(() => Task.WhenAll(
             _indexer.RunAsync(_cts.Token),

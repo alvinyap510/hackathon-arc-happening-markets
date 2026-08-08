@@ -40,24 +40,64 @@ public sealed class EventIndexer
 
     public ulong CursorBlock => _cursorBlock;
 
-    /// <summary>Replay every event from the start block to the head, in order. The replay is a
+    /// <summary>
+    /// Replay every event from the start block to the head, in order. The replay is a
     /// REBUILD: <paramref name="_onReplayStart"/> clears all derived state first so events are
-    /// never applied on top of stale balances (restart + reorg paths).</summary>
+    /// never applied on top of stale balances (restart + reorg paths).
+    /// Paced at the poll interval and retried with exponential backoff per span, so a cold
+    /// replay of a large gap lives within public-RPC eth_getLogs rate limits instead of
+    /// firing hundreds of calls in a tight burst (the startup-crash defect: a 429 here used
+    /// to propagate out of VenueCore.StartAsync and kill the process).
+    /// </summary>
     public async Task ReplayAsync(CancellationToken ct)
     {
         if (_onReplayStart != null) await _onReplayStart();
-        var latest = await _gateway.LatestBlockAsync(ct);
         var from = _startBlock;
-        while (from <= latest)
+        var backoffMs = 0;
+        while (!ct.IsCancellationRequested)
         {
-            ct.ThrowIfCancellationRequested();
-            var to = Math.Min(from + MaxBlockSpan - 1, latest);
-            var events = await _gateway.FetchLogsAsync(from, to, ct);
-            if (events.Count > 0) await _apply(events);
-            _cursorBlock = to;
-            from = to + 1;
+            try
+            {
+                // Re-fetch the head each iteration so the replay follows the chain forward.
+                var latest = await _gateway.LatestBlockAsync(ct);
+                var to = Math.Min(from + MaxBlockSpan - 1, latest);
+                var events = await _gateway.FetchLogsAsync(from, to, ct);
+                backoffMs = 0;
+                if (events.Count > 0) await _apply(events);
+                _cursorBlock = to;
+                if (to >= latest) break;
+                from = to + 1;
+                await Task.Delay(_pollIntervalMs, ct); // pace: one span per poll interval (proven RPC-safe)
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // Retry the SAME span (from does not advance) after an increasing backoff.
+                if (backoffMs == 0) backoffMs = InitialBackoffMs;
+                else backoffMs = Math.Min(backoffMs * 2, MaxBackoffMs);
+                Console.WriteLine($"indexer: replay failed at {from}: {ex.Message}; retrying in {backoffMs}ms");
+                try
+                {
+                    await Task.Delay(backoffMs, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+            }
         }
-        _cursorHash = await _gateway.GetBlockHashAsync(_cursorBlock, ct);
+        // Best-effort cursor hash: if it fails, the next poll re-checks from scratch.
+        try
+        {
+            _cursorHash = await _gateway.GetBlockHashAsync(_cursorBlock, ct);
+        }
+        catch
+        {
+            _cursorHash = "";
+        }
     }
 
     /// <summary>Fetch new logs since the cursor; replay from scratch if the cursor block reorged.</summary>

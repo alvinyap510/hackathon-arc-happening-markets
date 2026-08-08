@@ -1,3 +1,4 @@
+using System.Threading;
 using System.Numerics;
 using Venue.Chain;
 using Venue.Domain;
@@ -58,6 +59,29 @@ public class IndexerTests
         public Task<BigInteger> GetUsdcWalletBalanceAsync(string user, CancellationToken ct) => throw new NotImplementedException();
         public Task FundGasAsync(string address, CancellationToken ct) => throw new NotImplementedException();
         public Task<TxStatus> TxStatusAsync(string txHash, CancellationToken ct) => throw new NotImplementedException();
+    }
+
+    [Fact]
+    public async Task Indexer_Replay_BacksOffAndCompletesWhenRateLimitLifts()
+    {
+        // The startup-crash defect: ReplayAsync used to fire spans in a tight no-retry loop,
+        // so a single eth_getLogs 429 (-32011) propagated out of VenueCore.StartAsync and
+        // killed the process. It must now retry the SAME span after a backoff and complete.
+        var gw = new ScriptedIndexerGateway
+        {
+            FailuresRemaining = 3,
+            Latest = 5_000,
+            ToEmit = new Deposited(TestData.Vault, 1, 0, "0x", TestData.Alice, 1_000_000),
+        };
+        var applied = new List<VenueEvent>();
+        var indexer = new EventIndexer(gw, e => { applied.AddRange(e); return Task.CompletedTask; }, null, 1, pollIntervalMs: 10);
+
+        // ReplayAsync must NOT throw on the -32011s and must reach the head.
+        await indexer.ReplayAsync(System.Threading.CancellationToken.None);
+
+        Assert.True(gw.FetchCalls > 3, $"replayed past the failures ({gw.FetchCalls} fetch attempts)");
+        Assert.Contains(applied, e => e is Deposited { User: TestData.Alice });
+        Assert.Equal(5_000UL, indexer.CursorBlock); // reached the head
     }
 
     [Fact]
