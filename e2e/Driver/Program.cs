@@ -48,7 +48,7 @@ public static class Program
     internal static string EvidenceFile = RepoRootEvidencePath();
     internal static string BackendCommitOverride => Env("E2E_BACKEND_COMMIT", "");
 
-    static readonly string NativeGasPerAccount = "4000000000000000000"; // 4 native USDC (18-dec)
+    static readonly string NativeGasPerAccount = Env("E2E_GAS_PER_ACCOUNT", "4000000000000000000"); // native USDC top-up per account (18-dec)
     const string Mint10K = "10000000000";    // 10,000 MockUSDC per account (6-dec)
     internal const string Deposit5K = "5000000000";   // 5,000 MockUSDC deposited
     const string Qty1000 = "1000000000";     // RFM quantity 1,000
