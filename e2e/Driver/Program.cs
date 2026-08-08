@@ -263,10 +263,15 @@ public static class Program
         var health = await Api.GetAsync<HealthView>(null, "/v1/health");
         Require(health.ChainId == ArcChainId, "backend /v1/health ChainId " + health.ChainId + " != " + ArcChainId);
         var version = await Api.GetAsync<VersionView>(null, "/v1/version");
-        var beCommit = string.IsNullOrWhiteSpace(version.Commit) ? BackendCommitOverride : version.Commit;
-        Require(!string.IsNullOrWhiteSpace(beCommit),
-            "backend /v1/version does not report a commit; set E2E_BACKEND_COMMIT to pin the verified build");
-        Evidence.BackendCommit = beCommit;
+        // A commit is only "verified" if it looks like a git sha. The backend's config default
+        // is the literal "unknown", which must NOT satisfy this gate; a valid override takes
+        // precedence over an invalid reported value, and no valid value anywhere fails preflight.
+        static bool IsSha(string? s) => !string.IsNullOrWhiteSpace(s) && s.Length is >= 7 and <= 40
+            && s.All(c => c is (>= '0' and <= '9') or (>= 'a' and <= 'f') or (>= 'A' and <= 'F'));
+        var beCommit = IsSha(version.Commit) ? version.Commit : (IsSha(BackendCommitOverride) ? BackendCommitOverride : null);
+        Require(beCommit != null,
+            "backend /v1/version reports no valid git sha (got \"" + version.Commit + "\"); set Venue__Version on the backend or a valid E2E_BACKEND_COMMIT");
+        Evidence.BackendCommit = beCommit!;
         Pass("backend healthy on chain " + health.ChainId + "; verified build commit " + beCommit);
 
         // ---- pre-run snapshot (D8/§9): ONE pinned block, all reads at that block ----
@@ -300,10 +305,20 @@ public static class Program
             await RecordTxAsync(deposit.TxHash!, u.Name + "-deposit", Acceptance.DepositIndexed);
             // Recover the backend's approve-before-deposit tx hash via a narrow bounded Approval
             // query around the deposit block (R2-6: address-level allowlists include the approval).
-            var depositBlock = (await Chain.Web3.Eth.Transactions.GetTransactionReceipt.SendRequestAsync(deposit.TxHash!))?.BlockNumber?.Value ?? await Chain.BlockNumber();
+            var depositTx = await Chain.Web3.Eth.Transactions.GetTransactionByHash.SendRequestAsync(deposit.TxHash!);
+            Require(depositTx != null, "deposit tx body for " + u.Name + " not retrievable");
+            var depositBlock = depositTx!.BlockNumber?.Value ?? await Chain.BlockNumber();
             var approval = await Chain.FindApprovalAroundAsync(u.Address, Addrs.Vault, depositBlock);
             Require(approval != null, "approve tx for " + u.Name + " not found near deposit block " + depositBlock);
-            await Chain.RecordReceiptAsync(approval!.Log.TransactionHash, u.Name + "-approve", Acceptance.DepositIndexed,
+            // Causal binding, not proximity: the backend signs approve then deposit from the same
+            // account, so the approval MUST be the sender's immediately preceding nonce. A window
+            // match from an earlier run on this persistent chain fails here instead of passing.
+            var approvalTx = await Chain.Web3.Eth.Transactions.GetTransactionByHash.SendRequestAsync(approval!.Log.TransactionHash);
+            Require(approvalTx != null, "approval tx body for " + u.Name + " not retrievable");
+            Require(approvalTx!.From.Equals(depositTx.From, StringComparison.OrdinalIgnoreCase)
+                    && approvalTx.Nonce?.Value == (depositTx.Nonce?.Value ?? 0) - 1,
+                $"approval {shortHash(approval.Log.TransactionHash)} (nonce {approvalTx.Nonce?.Value}) is not the tx immediately preceding deposit (nonce {depositTx.Nonce?.Value}) for {u.Name}");
+            await Chain.RecordReceiptAsync(approval.Log.TransactionHash, u.Name + "-approve", Acceptance.DepositIndexed,
                 "Approval(owner=" + shortHash(u.Address) + " spender=vault value=" + Deposit5K + ")");
         }
         await WaitUntil(TimeSpan.FromSeconds(180), async () =>
@@ -352,7 +367,12 @@ public static class Program
         var requestCountAfter = await Chain.RequestCount();
         Require(requestCountAfter > requestCountBefore,
             "RFM.requestCount() did not increase (" + requestCountBefore + " -> " + requestCountAfter + ")");
-        Pass("RFM posted; decoded requestId " + requestId + " (requestCount " + requestCountBefore + " -> " + requestCountAfter + ", tx " + shortHash(PostTxHash) + ")");
+        // §9: the pre-run snapshot was taken before this requestId existed; backfill its lock
+        // records now, read historically AT the pre-run pinned block (all must be dead/absent).
+        await Chain.BackfillLocksAsync(PreSnap, requestId);
+        foreach (var (label, refHex, _, amount, live) in PreSnap.Locks)
+            Require(!live && amount == 0, $"pre-run RFM lock {label} ({refHex}) already live at block {PreSnap.Block}");
+        Pass("RFM posted; decoded requestId " + requestId + " (requestCount " + requestCountBefore + " -> " + requestCountAfter + ", tx " + shortHash(PostTxHash) + "); pre-run locks dead at block " + PreSnap.Block);
 
         var rfmView = await WaitFor(TimeSpan.FromSeconds(60), async () => await Api.GetRfmAsync(requestId), r => r != null);
         Require(rfmView!.Phase is "open" or "commit", "request mirrored, phase=" + rfmView.Phase);
@@ -391,7 +411,10 @@ public static class Program
         Require(bornLog != null, "MarketBorn log not found near block " + bornBlock);
         Require(SameHex(bornLog!.Log.Topics.Length > 2 ? bornLog.Log.Topics[2] : null, born!.MarketId),
             "born marketId matches the observed born");
-        await Chain.RecordReceiptAsync(bornLog.Log.TransactionHash, "rfm-finalize", Acceptance.MarketBorn, "MarketBorn(marketId=" + shortHash(born.MarketId) + ")");
+        var bornEv = bornLog.Event;
+        await Chain.RecordReceiptAsync(bornLog.Log.TransactionHash, "rfm-finalize", Acceptance.MarketBorn,
+            "MarketBorn(requestId=" + bornEv.RequestId + " marketId=" + shortHash(born.MarketId)
+            + " marginal=" + bornEv.MarginalYesTick + " vwap=" + bornEv.VwapYesTick + " filled=" + bornEv.FilledQuantity + ")");
         Require(born!.MarginalYesTick != born.VwapYesTick,
             "marginal (" + born.MarginalYesTick + ") must differ from vwap (" + born.VwapYesTick + ")");
         Pass("market born: marginal " + born.MarginalYesTick + " != vwap " + born.VwapYesTick + " (genuine competition)");
@@ -440,7 +463,8 @@ public static class Program
         var resolveBlock = await Chain.BlockNumber();
         var resolveLog = await Chain.FindEventAroundAsync(Addrs.OutcomeTokens, resolveBlock, new MarketResolvedEventDTO(), CurrentMarketId, "MarketResolved");
         Require(resolveLog != null, "MarketResolved log not found near block " + resolveBlock);
-        await Chain.RecordReceiptAsync(resolveLog!.Log.TransactionHash, "operator-resolve", Acceptance.Resolved, "MarketResolved(marketId=" + shortHash(CurrentMarketId) + ")");
+        await Chain.RecordReceiptAsync(resolveLog!.Log.TransactionHash, "operator-resolve", Acceptance.Resolved,
+            "MarketResolved(marketId=" + shortHash(CurrentMarketId) + " outcome=" + (resolveLog.Event.Outcome == 0 ? "YES" : "NO") + ")");
         Pass("market resolved (winning = yes)");
 
         Step("16. winners redeem 1:1; winner USDC increases by exactly the burned amount");
@@ -783,7 +807,7 @@ public static class Program
         var hash = await web3.Eth.GetContractHandler(to).SendRequestAsync(msg);
         Require(!string.IsNullOrWhiteSpace(hash), "tx to " + to + " produced no hash");
         var receipt = await AwaitReceipt(web3, hash!, kind, TimeSpan.FromSeconds(120));
-        Evidence.RecordTx(kind, hash!, to, "success", acceptance, "contract call block=" + receipt.BlockNumber?.Value);
+        Evidence.RecordTx(kind, hash!, to, "success", acceptance, DecodeSummary(kind, receipt));
         return hash!;
     }
 
@@ -810,22 +834,44 @@ public static class Program
         Evidence.RecordTx(kind, txHash, receipt.To, status, acceptance, DecodeSummary(kind, receipt));
     }
 
-    /// <summary>Decode the step's relevant event from a receipt for the evidence summary.</summary>
+    /// <summary>Decode the step's relevant event from a receipt for the evidence summary.
+    /// FAIL-CLOSED for event-bearing steps: if the expected event is absent from the receipt,
+    /// the run fails rather than quietly recording a status-only line (a "Decoded event" column
+    /// filled with undecoded entries is not evidence).</summary>
     static string DecodeSummary(string kind, TransactionReceipt receipt)
     {
-        var deposited = Chain.DecodeEventFrom<DepositedEventDTO>(receipt, Addrs.Vault);
-        if (kind.EndsWith("-deposit", StringComparison.Ordinal) && deposited != null)
-            return "Deposited(user=" + shortHash(deposited.Event.User) + " amt=" + deposited.Event.Amt + ")";
-        var committed = Chain.DecodeEventFrom<QuoteCommittedEventDTO>(receipt, Addrs.Rfm);
-        if (kind.EndsWith("-commit", StringComparison.Ordinal) && committed != null)
-            return "QuoteCommitted(requestId=" + committed.Event.RequestId + " mm=" + shortHash(committed.Event.Mm) + " commitIndex=" + committed.Event.CommitIndex + ")";
-        var revealed = Chain.DecodeEventFrom<QuoteRevealedEventDTO>(receipt, Addrs.Rfm);
-        if (kind.EndsWith("-reveal", StringComparison.Ordinal) && revealed != null)
-            return "QuoteRevealed(requestId=" + revealed.Event.RequestId + " mm=" + shortHash(revealed.Event.Mm) + " tick=" + revealed.Event.Tick + " size=" + revealed.Event.Size + " inRange=" + revealed.Event.InRange + ")";
-        var redeemed = Chain.DecodeEventFrom<RedeemedEventDTO>(receipt, Addrs.Vault)
-            ?? Chain.DecodeEventFrom<RedeemedEventDTO>(receipt, Addrs.OutcomeTokens);
-        if (kind.EndsWith("-redeem", StringComparison.Ordinal) && redeemed != null)
-            return "Redeemed(user=" + shortHash(redeemed.Event.User) + " market=" + shortHash("0x" + Convert.ToHexStringLower(redeemed.Event.MarketId)) + " amt=" + redeemed.Event.Amt + ")";
+        if (kind.EndsWith("-deposit", StringComparison.Ordinal))
+        {
+            var d = Chain.DecodeEventFrom<DepositedEventDTO>(receipt, Addrs.Vault);
+            Require(d != null, kind + ": expected Deposited event absent from receipt " + receipt.TransactionHash);
+            return "Deposited(user=" + shortHash(d!.Event.User) + " amt=" + d.Event.Amt + ")";
+        }
+        if (kind.EndsWith("-commit", StringComparison.Ordinal))
+        {
+            var c = Chain.DecodeEventFrom<QuoteCommittedEventDTO>(receipt, Addrs.Rfm);
+            Require(c != null, kind + ": expected QuoteCommitted event absent from receipt " + receipt.TransactionHash);
+            return "QuoteCommitted(requestId=" + c!.Event.RequestId + " mm=" + shortHash(c.Event.Mm) + " commitIndex=" + c.Event.CommitIndex + ")";
+        }
+        if (kind.EndsWith("-reveal", StringComparison.Ordinal))
+        {
+            var r = Chain.DecodeEventFrom<QuoteRevealedEventDTO>(receipt, Addrs.Rfm);
+            Require(r != null, kind + ": expected QuoteRevealed event absent from receipt " + receipt.TransactionHash);
+            return "QuoteRevealed(requestId=" + r!.Event.RequestId + " mm=" + shortHash(r.Event.Mm) + " tick=" + r.Event.Tick + " size=" + r.Event.Size + " inRange=" + r.Event.InRange + ")";
+        }
+        if (kind.EndsWith("-redeem", StringComparison.Ordinal))
+        {
+            var rd = Chain.DecodeEventFrom<RedeemedEventDTO>(receipt, Addrs.Vault)
+                ?? Chain.DecodeEventFrom<RedeemedEventDTO>(receipt, Addrs.OutcomeTokens);
+            Require(rd != null, kind + ": expected Redeemed event absent from receipt " + receipt.TransactionHash);
+            return "Redeemed(user=" + shortHash(rd!.Event.User) + " market=" + shortHash("0x" + Convert.ToHexStringLower(rd.Event.MarketId)) + " amt=" + rd.Event.Amt + ")";
+        }
+        if (kind.StartsWith("mock-mint-", StringComparison.Ordinal))
+        {
+            var t = Chain.DecodeEventFrom<TransferEventDTO>(receipt, Addrs.Usdc);
+            Require(t != null, kind + ": expected ERC-20 Transfer event absent from receipt " + receipt.TransactionHash);
+            return "Transfer(from=" + shortHash(t!.Event.From) + " to=" + shortHash(t.Event.To) + " value=" + t.Event.Value + ")";
+        }
+        // Steps with no expected contract event (native gas transfers): status line is the record.
         return "status=" + (receipt.Status?.Value == 1 ? "success" : "reverted") + " block=" + receipt.BlockNumber?.Value;
     }
 
@@ -1049,9 +1095,13 @@ public sealed class ChainQueries
 
     // ---- Vault.locks(bytes32) -> (user, amount, live) ----
 
-    public async Task<LockView> LockInfo(string refHex)
+    public Task<LockView> LockInfo(string refHex) => LockInfoAt(refHex, "latest");
+
+    /// <summary>Lock record read pinned to a block tag, so snapshot lock evidence really is
+    /// the state at the snapshot's block (never a "latest" read labeled with an older block).</summary>
+    public async Task<LockView> LockInfoAt(string refHex, string blockTag)
     {
-        var raw = await CallRaw(_a.Vault, LocksSel + H32(refHex), "latest");
+        var raw = await CallRaw(_a.Vault, LocksSel + H32(refHex), blockTag);
         var h = raw.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? raw[2..] : raw;
         if (h.Length < 192) return new LockView("0x0", BigInteger.Zero, false);
         var user = "0x" + h[24..64];
@@ -1283,11 +1333,24 @@ public sealed class ChainQueries
         {
             foreach (var (label, refHex) in RfmLockRefs(requestId.Value))
             {
-                var lk = await LockInfo(refHex);
+                var lk = await LockInfoAt(refHex, blockTag); // pinned: same block as every other read here
                 s.Locks.Add((label, refHex, lk.User, lk.Amount, lk.Live));
             }
         }
         return s;
+    }
+
+    /// <summary>Backfill lock records into an already-taken snapshot at ITS pinned block. Used for
+    /// the pre-run snapshot, which is taken before the requestId (and so the lock refs) exists:
+    /// the refs are derived after RequestPosted decodes, then read historically at PreSnap.Block.</summary>
+    internal async Task BackfillLocksAsync(Snapshot s, BigInteger requestId)
+    {
+        var blockTag = "0x" + s.Block.ToString("x");
+        foreach (var (label, refHex) in RfmLockRefs(requestId))
+        {
+            var lk = await LockInfoAt(refHex, blockTag);
+            s.Locks.Add((label, refHex, lk.User, lk.Amount, lk.Live));
+        }
     }
 
     public static BigInteger HexToU256(string hex)
@@ -1679,6 +1742,14 @@ public sealed class ApprovalEventDTO : IEventDTO
 {
     [Parameter("address", "owner", 1, true)] public string Owner { get; set; } = "";
     [Parameter("address", "spender", 2, true)] public string Spender { get; set; } = "";
+    [Parameter("uint256", "value", 3, false)] public BigInteger Value { get; set; }
+}
+
+[Event("Transfer")]
+public sealed class TransferEventDTO : IEventDTO
+{
+    [Parameter("address", "from", 1, true)] public string From { get; set; } = "";
+    [Parameter("address", "to", 2, true)] public string To { get; set; } = "";
     [Parameter("uint256", "value", 3, false)] public BigInteger Value { get; set; }
 }
 
