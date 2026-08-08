@@ -388,6 +388,11 @@ public static class Program
             "on-chain commit window " + (commitDeadline - postStart) + "s != " + PresetCommitSec + "s (1m preset)");
         Pass("1m preset windows verified on-chain (commit 40s / reveal 20s)");
 
+        // Anchor the MarketBorn scan BEFORE any commits: finalize is contractually impossible
+        // until revealDeadline passes, so the forward scan from here is guaranteed to contain the
+        // finalize tx regardless of how late the reveals land or how much the mirror lags (HCR1).
+        var bornAnchor = await Chain.BlockNumber();
+
         Step("7. MMs commit sealed quotes (before the commit deadline, distinct ticks)");
         await SubmitSigned(Tokens[Mm1.Address], requestId, "/v1/rfm/commit", Mm1Tick, MmQty700, "mm1");
         await SubmitSigned(Tokens[Mm2.Address], requestId, "/v1/rfm/commit", Mm2Tick, MmQty700, "mm2");
@@ -400,9 +405,6 @@ public static class Program
         Pass("quotes revealed");
 
         Step("9. wait for the reveal deadline + buffer, then coordinator finalize -> MarketBorn");
-        // Anchor BEFORE the reveal deadline: finalize cannot mine earlier, so the forward scan
-        // from here is guaranteed to contain the MarketBorn tx regardless of mirror lag.
-        var bornAnchor = await Chain.BlockNumber();
         await WaitForDeadline(revealDeadline, RevealBufferSec, "reveal deadline");
         var born = await WaitFor(TimeSpan.FromSeconds(240), async () =>
         {
@@ -410,8 +412,9 @@ public static class Program
             return v?.Born is { MarketId: not null } ? v.Born : null;
         }, b => b != null);
         Require(born != null, "MarketBorn");
-        // finalize (MarketBorn) tx has no API hash; forward scan from the pre-deadline anchor.
-        var bornLog = await Chain.FindEventFromAsync(Addrs.Rfm, bornAnchor, new MarketBornEventDTO(), null, "MarketBorn");
+        // finalize (MarketBorn) tx has no API hash; forward scan from the pre-commit anchor, scoped
+        // to THIS requestId (topic1) so a concurrent request's MarketBorn cannot be selected (HCR1/HCR2).
+        var bornLog = await Chain.FindEventFromAsync(Addrs.Rfm, bornAnchor, new MarketBornEventDTO(), "0x" + requestId.ToString("x").PadLeft(64, '0'), "MarketBorn");
         Require(bornLog != null, "MarketBorn log not found from anchor block " + bornAnchor);
         Require(SameHex(bornLog!.Log.Topics.Length > 2 ? bornLog.Log.Topics[2] : null, born!.MarketId),
             "born marketId matches the observed born");
