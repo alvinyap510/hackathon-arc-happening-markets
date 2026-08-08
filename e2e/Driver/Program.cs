@@ -374,17 +374,19 @@ public static class Program
             Require(!live && amount == 0, $"pre-run RFM lock {label} ({refHex}) already live at block {PreSnap.Block}");
         Pass("RFM posted; decoded requestId " + requestId + " (requestCount " + requestCountBefore + " -> " + requestCountAfter + ", tx " + shortHash(PostTxHash) + "); pre-run locks dead at block " + PreSnap.Block);
 
-        var rfmView = await WaitFor(TimeSpan.FromSeconds(60), async () => await Api.GetRfmAsync(requestId), r => r != null);
-        Require(rfmView!.Phase is "open" or "commit", "request mirrored, phase=" + rfmView.Phase);
-        var commitDeadline = Unix(rfmView.CommitDeadline);
-        var revealDeadline = Unix(rfmView.RevealDeadline);
-        Require(commitDeadline > 0 && revealDeadline > commitDeadline, "mirrored deadlines sane");
-        // the duration spec: the 1m preset must mirror exactly 40s commit and a 20s reveal span.
+        // The auction clock comes from the CONTRACT, not the mirror: with a 40s commit window the
+        // indexer (2s poll, up to 30s rate-limit backoff) must never gate the commits. The mirror
+        // equivalence check runs off the critical path in step 9.
+        var (chainCommit, chainReveal) = await Chain.RequestDeadlines(requestId);
+        var commitDeadline = (long)chainCommit;
+        var revealDeadline = (long)chainReveal;
+        Require(commitDeadline > 0 && revealDeadline > commitDeadline, "on-chain deadlines sane");
+        // the duration spec: the 1m preset must be exactly a 40s commit window and a 20s reveal span.
         Require(revealDeadline - commitDeadline == PresetRevealSec,
-            "mirrored reveal span " + (revealDeadline - commitDeadline) + "s != " + PresetRevealSec + "s (1m preset)");
+            "on-chain reveal span " + (revealDeadline - commitDeadline) + "s != " + PresetRevealSec + "s (1m preset)");
         Require(Math.Abs((commitDeadline - postStart) - PresetCommitSec) <= 2,
-            "mirrored commit window " + (commitDeadline - postStart) + "s != " + PresetCommitSec + "s (1m preset)");
-        Pass("request mirrored (phase " + rfmView.Phase + "); 1m preset windows verified (commit 40s / reveal 20s)");
+            "on-chain commit window " + (commitDeadline - postStart) + "s != " + PresetCommitSec + "s (1m preset)");
+        Pass("1m preset windows verified on-chain (commit 40s / reveal 20s)");
 
         Step("7. MMs commit sealed quotes (before the commit deadline, distinct ticks)");
         await SubmitSigned(Tokens[Mm1.Address], requestId, "/v1/rfm/commit", Mm1Tick, MmQty700, "mm1");
@@ -398,6 +400,9 @@ public static class Program
         Pass("quotes revealed");
 
         Step("9. wait for the reveal deadline + buffer, then coordinator finalize -> MarketBorn");
+        // Anchor BEFORE the reveal deadline: finalize cannot mine earlier, so the forward scan
+        // from here is guaranteed to contain the MarketBorn tx regardless of mirror lag.
+        var bornAnchor = await Chain.BlockNumber();
         await WaitForDeadline(revealDeadline, RevealBufferSec, "reveal deadline");
         var born = await WaitFor(TimeSpan.FromSeconds(240), async () =>
         {
@@ -405,10 +410,9 @@ public static class Program
             return v?.Born is { MarketId: not null } ? v.Born : null;
         }, b => b != null);
         Require(born != null, "MarketBorn");
-        // finalize (MarketBorn) tx has no API hash; NARROW bounded query around the observed block.
-        var bornBlock = await Chain.BlockNumber();
-        var bornLog = await Chain.FindEventAroundAsync(Addrs.Rfm, bornBlock, new MarketBornEventDTO(), null, "MarketBorn");
-        Require(bornLog != null, "MarketBorn log not found near block " + bornBlock);
+        // finalize (MarketBorn) tx has no API hash; forward scan from the pre-deadline anchor.
+        var bornLog = await Chain.FindEventFromAsync(Addrs.Rfm, bornAnchor, new MarketBornEventDTO(), null, "MarketBorn");
+        Require(bornLog != null, "MarketBorn log not found from anchor block " + bornAnchor);
         Require(SameHex(bornLog!.Log.Topics.Length > 2 ? bornLog.Log.Topics[2] : null, born!.MarketId),
             "born marketId matches the observed born");
         var bornEv = bornLog.Event;
@@ -427,42 +431,46 @@ public static class Program
         await AssertPositionsAsync(Expected.Tokens("after-birth"));
 
         Step("11. MINT (BUY YES x BUY NO)");
+        var mintAnchor = await Chain.BlockNumber();
         await PlaceOrder(Tokens[Institution.Address], "yes", "buy", Trade2000, 600);   // rests YES bid @600
         var mintFills = await PlaceOrder(Tokens[Trader.Address], "no", "buy", Trade2000, 400); // crosses
         RequireFillsCaseInsensitive(mintFills, "MINT");
-        await CaptureBatchAsync(1, "settle-mint", mintFills);
+        await CaptureBatchAsync(1, "settle-mint", mintFills, mintAnchor);
         await AssertPositionsAsync(Expected.Tokens("after-mint"));
 
         Step("12. TRANSFER YES (BUY YES x SELL YES)");
+        var xferYesAnchor = await Chain.BlockNumber();
         await PlaceOrder(Tokens[Institution.Address], "yes", "sell", Trade1000, 500);  // rests YES ask @500
         var xferYes = await PlaceOrder(Tokens[Trader.Address], "yes", "buy", Trade1000, 500);
         RequireFillsCaseInsensitive(xferYes, "TRANSFER");
-        await CaptureBatchAsync(2, "settle-transfer-yes", xferYes);
+        await CaptureBatchAsync(2, "settle-transfer-yes", xferYes, xferYesAnchor);
         await AssertPositionsAsync(Expected.Tokens("after-transfer-yes"));
 
         Step("13. TRANSFER NO (BUY NO x SELL NO)");
+        var xferNoAnchor = await Chain.BlockNumber();
         await PlaceOrder(Tokens[Trader.Address], "no", "sell", Trade1000, 500);        // rests NO bid @500
         var xferNo = await PlaceOrder(Tokens[Institution.Address], "no", "buy", Trade1000, 500);
         RequireFillsCaseInsensitive(xferNo, "TRANSFER");
-        await CaptureBatchAsync(3, "settle-transfer-no", xferNo);
+        await CaptureBatchAsync(3, "settle-transfer-no", xferNo, xferNoAnchor);
         await AssertPositionsAsync(Expected.Tokens("after-transfer-no"));
 
         Step("14. MERGE (SELL YES x SELL NO)");
+        var mergeAnchor = await Chain.BlockNumber();
         await PlaceOrder(Tokens[Institution.Address], "yes", "sell", Trade500, 500);   // rests YES ask @500
         var mergeFills = await PlaceOrder(Tokens[Trader.Address], "no", "sell", Trade500, 500);
         RequireFillsCaseInsensitive(mergeFills, "MERGE");
-        await CaptureBatchAsync(4, "settle-merge", mergeFills);
+        await CaptureBatchAsync(4, "settle-merge", mergeFills, mergeAnchor);
         await AssertPositionsAsync(Expected.Tokens("after-merge"));
 
-        Step("15. operator resolves (YES wins); MarketResolved hash via narrow query");
+        Step("15. operator resolves (YES wins); MarketResolved hash via anchored forward scan");
+        var resolveAnchor = await Chain.BlockNumber();
         var resolved = await Api.PostAsync(Tokens[Operator.Address], "/v1/markets/" + CurrentMarketId + "/resolve", new { outcome = "yes" });
         Require(resolved.Resolved == true, "resolve accepted");
         var resView = await WaitFor(TimeSpan.FromSeconds(90), async () =>
             await Api.GetAsync<ResolutionView>(Tokens[Institution.Address], "/v1/resolution/" + CurrentMarketId), r => r is { Resolved: true });
         Require(resView!.Resolved, "market resolved");
-        var resolveBlock = await Chain.BlockNumber();
-        var resolveLog = await Chain.FindEventAroundAsync(Addrs.OutcomeTokens, resolveBlock, new MarketResolvedEventDTO(), CurrentMarketId, "MarketResolved");
-        Require(resolveLog != null, "MarketResolved log not found near block " + resolveBlock);
+        var resolveLog = await Chain.FindEventFromAsync(Addrs.OutcomeTokens, resolveAnchor, new MarketResolvedEventDTO(), CurrentMarketId, "MarketResolved");
+        Require(resolveLog != null, "MarketResolved log not found from anchor block " + resolveAnchor);
         await Chain.RecordReceiptAsync(resolveLog!.Log.TransactionHash, "operator-resolve", Acceptance.Resolved,
             "MarketResolved(marketId=" + shortHash(CurrentMarketId) + " outcome=" + (resolveLog.Event.Outcome == 0 ? "YES" : "NO") + ")");
         Pass("market resolved (winning = yes)");
@@ -631,15 +639,14 @@ public static class Program
     /// assert market/class/parties/tick/size plus that the API fill's tradeId appears in the
     /// on-chain tradeIds (the acceptance criteria) — not just the API label.
     /// </summary>
-    static async Task CaptureBatchAsync(int nth, string label, List<FillView> fills)
+    static async Task CaptureBatchAsync(int nth, string label, List<FillView> fills, BigInteger anchorBlock)
     {
         await WaitTrades(nth);
         var trades = (await Api.GetMarketAsync(CurrentMarketId)).Trades;
         var batchId = trades.Count >= nth ? trades[nth - 1].BatchId : null;
         Require(batchId != null, "batchId for " + label);
-        var block = await Chain.BlockNumber();
-        var log = await Chain.FindEventAroundAsync(Addrs.Exchange, block, new BatchSettledEventDTO(), batchId, label);
-        Require(log != null, label + " BatchSettled log not found near block " + block);
+        var log = await Chain.FindEventFromAsync(Addrs.Exchange, anchorBlock, new BatchSettledEventDTO(), batchId, label);
+        Require(log != null, label + " BatchSettled log not found from anchor block " + anchorBlock);
         var txHash = log!.Log.TransactionHash;
 
         // Correlate the on-chain BatchSettled tradeIds with the API fill ids.
@@ -675,7 +682,25 @@ public static class Program
     /// expected (participant, token) must be reported with the exact amount, and no unexpected
     /// nonzero position on the born market may appear.
     /// </summary>
+    /// <summary>Bounded retry wrapper: the backend mirror lags the chain by its poll interval
+    /// plus any rate-limit backoff (up to ~30s), so exact-state assertions poll until they hold
+    /// or the deadline passes. Fail-closed: the FINAL state must satisfy every exact assert.</summary>
     static async Task AssertPositionsAsync(IReadOnlyDictionary<Role, ExpectedTokens> expected)
+    {
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(150);
+        while (true)
+        {
+            try { await AssertPositionsOnceAsync(expected); return; }
+            catch (DriverAssertion ex)
+            {
+                if (DateTimeOffset.UtcNow >= deadline) throw;
+                Console.WriteLine("  [wait] state not yet mirrored (" + ex.Message + "); retrying");
+                await Task.Delay(4000);
+            }
+        }
+    }
+
+    static async Task AssertPositionsOnceAsync(IReadOnlyDictionary<Role, ExpectedTokens> expected)
     {
         // On-chain absolute asserts.
         foreach (var (who, want) in expected)
@@ -800,7 +825,7 @@ public static class Program
 
     // ------------------------------------------------------------------ chain plumbing
 
-    static async Task<string> SendContractAsync(Web3 web3, string to, FunctionMessage msg, string kind, string acceptance)
+    static async Task<string> SendContractAsync<TFunc>(Web3 web3, string to, TFunc msg, string kind, string acceptance) where TFunc : Nethereum.Contracts.FunctionMessage, new()
     {
         // submit returns ONLY the hash, then we receipt-await with an explicit timeout
         // (D3) — never a one-shot SendRequestAndWaitForReceipt that can hang the run (mints).
@@ -1023,6 +1048,7 @@ public sealed class ChainQueries
     static readonly string TokenIdSel = Selector("tokenId(bytes32,uint8)");
     static readonly string TotalSupplySel = Selector("totalSupply()");
     static readonly string RequestCountSel = Selector("requestCount()");
+    static readonly string RequestsSel = Selector("requests(uint256)");
     static readonly string LocksSel = Selector("locks(bytes32)");
     static readonly string SettleBatchSel = SettleBatchSelector();
 
@@ -1052,8 +1078,9 @@ public sealed class ChainQueries
     public Task<BigInteger> NativeBalance(string addr) => NativeBalanceAt(addr, "latest");
     public async Task<BigInteger> NativeBalanceAt(string addr, string blockTag)
     {
-        var bp = new Nethereum.RPC.Eth.DTOs.BlockParameter();
-        bp.SetValue(blockTag);
+        var bp = blockTag == "latest"
+            ? Nethereum.RPC.Eth.DTOs.BlockParameter.CreateLatest()
+            : new Nethereum.RPC.Eth.DTOs.BlockParameter(new Nethereum.Hex.HexTypes.HexBigInteger(blockTag));
         return (await Web3.Eth.GetBalance.SendRequestAsync(addr, bp)).Value;
     }
 
@@ -1075,6 +1102,18 @@ public sealed class ChainQueries
     public Task<string> TokenIdHex(string marketId, byte outcome) => TokenId(marketId, outcome).ContinueWith(t => "0x" + t.Result.ToString("x64"));
     public Task<BigInteger> TotalSupply() => Call(_a.Usdc, TotalSupplySel, "latest");
     public Task<BigInteger> RequestCount() => Call(_a.Rfm, RequestCountSel, "latest");
+
+    /// <summary>commitDeadline/revealDeadline straight from the contract (words 6 and 7 of the
+    /// requests(uint256) getter, all-static struct) - the auction clock authority. The backend
+    /// mirror must never sit on the 40s commit window's critical path.</summary>
+    public async Task<(BigInteger CommitDeadline, BigInteger RevealDeadline)> RequestDeadlines(BigInteger requestId)
+    {
+        var raw = await CallRaw(_a.Rfm, RequestsSel + U256(requestId), "latest");
+        var h = raw.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? raw[2..] : raw;
+        if (h.Length < 8 * 64) throw new DriverAssertion("requests(" + requestId + ") returned " + h.Length / 2 + " bytes");
+        BigInteger Word(int i) => BigInteger.Parse("0" + h[(i * 64)..((i + 1) * 64)], System.Globalization.NumberStyles.HexNumber);
+        return (Word(6), Word(7));
+    }
     public Task<BigInteger> MockWalletBalance(string addr) => Call(_a.Usdc, BalanceOfSel + A32(addr), "latest");
 
     public Task<BigInteger> CallAt(string to, string data, string blockTag) => Call(to, data, blockTag);
@@ -1088,11 +1127,24 @@ public sealed class ChainQueries
     {
         var call = new { from = _a.Operator, to, data = data.ToLowerInvariant() };
         var req = new RpcRequest(Guid.NewGuid().ToString(), "eth_call", new object[] { call, blockTag });
-        try { return await _client.SendRequestAsync<string>(req) ?? "0x"; }
-        catch (Exception ex) when (Environment.GetEnvironmentVariable("E2E_DEBUG") == "1")
+        // Public Arc RPC rate-limits eth_call too; same bounded retry as eth_getLogs so a transient
+        // 429 never kills a run that has funded on-chain state behind it.
+        var backoffMs = 2000;
+        for (var attempt = 1; ; attempt++)
         {
-            Console.Error.WriteLine($"[debug] eth_call FAILED to={to} block={blockTag} data={data.ToLowerInvariant()} err={ex.Message}");
-            throw;
+            try { return await _client.SendRequestAsync<string>(req) ?? "0x"; }
+            catch (Exception ex) when (attempt < 6)
+            {
+                if (Environment.GetEnvironmentVariable("E2E_DEBUG") == "1")
+                    Console.Error.WriteLine($"[debug] eth_call retry {attempt} to={to} block={blockTag} err={ex.Message}");
+                await Task.Delay(backoffMs);
+                backoffMs = Math.Min(backoffMs * 2, 30000);
+            }
+            catch (Exception ex) when (Environment.GetEnvironmentVariable("E2E_DEBUG") == "1")
+            {
+                Console.Error.WriteLine($"[debug] eth_call FAILED to={to} block={blockTag} data={data.ToLowerInvariant()} err={ex.Message}");
+                throw;
+            }
         }
     }
 
@@ -1273,6 +1325,26 @@ public sealed class ChainQueries
     }
 
     /// <summary>Narrow bounded eth_getLogs around an observed block for one event/topic1.</summary>
+    /// <summary>Forward scan for one event from a pre-action anchor block to the current head in
+    /// bounded chunks (the public RPC caps eth_getLogs span). The anchor MUST be captured before
+    /// the action that emits the event; a head-anchored window can miss the tx whenever the
+    /// backend mirror lags more than ~10s (~20 Arc blocks) between the tx and the observation.</summary>
+    public async Task<EventLog<T>?> FindEventFromAsync<T>(string address, BigInteger anchorBlock, T _, string? topic1, string label)
+        where T : IEventDTO, new()
+    {
+        var topic0 = "0x" + Event<T>.GetEventABI().Sha3Signature;
+        var head = await BlockNumber();
+        var from = anchorBlock < 0 ? BigInteger.Zero : anchorBlock;
+        while (from <= head)
+        {
+            var to = BigInteger.Min(from + 39, head);
+            var logs = await GetLogsAsync(address, topic0, topic1, from, to);
+            if (logs.Length > 0) return Event<T>.DecodeEvent(logs[0]);
+            from = to + 1;
+        }
+        return null;
+    }
+
     public async Task<EventLog<T>?> FindEventAroundAsync<T>(string address, BigInteger observedBlock, T _, string? topic1, string label)
         where T : IEventDTO, new()
     {
@@ -1302,7 +1374,19 @@ public sealed class ChainQueries
             Address = new[] { address },
             Topics = topic1 == null ? new object[] { topic0 } : new object[] { topic0, topic1 },
         };
-        return await Web3.Eth.Filters.GetLogs.SendRequestAsync(filter);
+        // Public Arc RPC rate-limits eth_getLogs; bounded retry with backoff so a narrow
+        // evidence query never kills a run that already has funded on-chain state behind it.
+        var backoffMs = 2000;
+        for (var attempt = 1; ; attempt++)
+        {
+            try { return await Web3.Eth.Filters.GetLogs.SendRequestAsync(filter); }
+            catch (Exception ex) when (attempt < 6)
+            {
+                Console.WriteLine($"  [retry] eth_getLogs attempt {attempt} failed ({ex.Message}); backing off {backoffMs}ms");
+                await Task.Delay(backoffMs);
+                backoffMs = Math.Min(backoffMs * 2, 30000);
+            }
+        }
     }
 
     public async Task RecordReceiptAsync(string txHash, string label, string acceptance, string decodedEvent)
