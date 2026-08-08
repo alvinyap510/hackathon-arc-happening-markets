@@ -33,9 +33,16 @@ public static class RfmEndpoints
             var minMatch = Amount(req.MinMatch);
             if (quantity <= 0 || minMatch <= 0 || minMatch > quantity) return Results.BadRequest(new { error = "quantity/minMatch invalid" });
 
+            // Optional requester-selected auction duration preset. Omitted/null keeps the
+            // configured default windows (back-compat); a preset is split 2/3 commit, 1/3
+            // reveal (reveal floored at 20s); any other value is rejected - never accept
+            // raw client deadlines (that is what keeps the contract's 7-day cap unreachable).
+            if (!TryResolveWindow(req.Duration, cfg.CommitSeconds, cfg.RevealSeconds, out var commitSec, out var revealSec))
+                return Results.BadRequest(new { error = $"duration must be one of: 1m, 15m, 1h, 4h, 24h (got \"{req.Duration}\")" });
+
             var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            var commitDeadline = now + cfg.CommitSeconds;
-            var revealDeadline = commitDeadline + cfg.RevealSeconds;
+            var commitDeadline = now + commitSec;
+            var revealDeadline = commitDeadline + revealSec;
             var marketHash = Hash.KeccakHex(req.Market ?? "rfm-market");
 
             // G1: the marketHash is the deterministic preimage the contract commits (the
@@ -149,7 +156,41 @@ public static class RfmEndpoints
     private static BigInteger? ParseSalt(string? salt)
         => string.IsNullOrWhiteSpace(salt) ? null : BigInteger.TryParse(salt, out var v) ? v : null;
 
-    public sealed record PostRequestReq(string? Market, string? Side, string? Quantity, long? MaxPriceTick, string? MinMatch, string? QuestionText, string? ResolutionSource, long? CloseTime);
+    /// <summary>
+    /// Resolve the auction window. A PRESET duration (the total commit+reveal span) maps to
+    /// commit = total - reveal with reveal = max(total/3, 20); null/empty falls back to the
+    /// configured defaults (today's behaviour). Returns false only for an unknown preset,
+    /// which the endpoint turns into HTTP 400. Only these presets are accepted.
+    /// </summary>
+    public static bool TryResolveWindow(string? duration, int defaultCommitSeconds, int defaultRevealSeconds, out int commitSeconds, out int revealSeconds)
+    {
+        if (string.IsNullOrWhiteSpace(duration))
+        {
+            commitSeconds = defaultCommitSeconds;
+            revealSeconds = defaultRevealSeconds;
+            return true;
+        }
+        if (!DurationTotals.TryGetValue(duration, out var totalSeconds))
+        {
+            commitSeconds = 0;
+            revealSeconds = 0;
+            return false;
+        }
+        revealSeconds = Math.Max(totalSeconds / 3, 20);
+        commitSeconds = totalSeconds - revealSeconds;
+        return true;
+    }
+
+    private static readonly Dictionary<string, int> DurationTotals = new()
+    {
+        ["1m"] = 60,
+        ["15m"] = 900,
+        ["1h"] = 3600,
+        ["4h"] = 14400,
+        ["24h"] = 86400,
+    };
+
+    public sealed record PostRequestReq(string? Market, string? Side, string? Quantity, long? MaxPriceTick, string? MinMatch, string? QuestionText, string? ResolutionSource, long? CloseTime, string? Duration);
     public sealed record CommitReq(BigInteger RequestId, long? PriceTick, string? Size, string? Salt);
     public sealed record RevealReq(BigInteger RequestId, long? PriceTick, string? Size, string? Salt);
 }

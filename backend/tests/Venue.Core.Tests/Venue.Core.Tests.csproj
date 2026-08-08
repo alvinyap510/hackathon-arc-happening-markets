@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Venue.Core\Venue.Core.csproj" />
+    <ProjectReference Include="..\..\src\Venue.Api\Venue.Api.csproj" />
   </ItemGroup>
 
 </Project>
