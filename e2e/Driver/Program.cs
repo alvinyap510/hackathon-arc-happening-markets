@@ -228,7 +228,7 @@ public static class Program
         {
             Evidence.Transcript = Transcript.ToString();
             try { Evidence.WriteFile(requireSuccess: false); } catch { /* best-effort on failure */ }
-            Console.Error.WriteLine("E2E FAILED: " + ex.Message);
+            Console.Error.WriteLine("E2E FAILED: " + (Environment.GetEnvironmentVariable("E2E_DEBUG") == "1" ? ex.ToString() : ex.Message));
             return 1;
         }
     }
@@ -1088,7 +1088,12 @@ public sealed class ChainQueries
     {
         var call = new { from = _a.Operator, to, data = data.ToLowerInvariant() };
         var req = new RpcRequest(Guid.NewGuid().ToString(), "eth_call", new object[] { call, blockTag });
-        return await _client.SendRequestAsync<string>(req) ?? "0x";
+        try { return await _client.SendRequestAsync<string>(req) ?? "0x"; }
+        catch (Exception ex) when (Environment.GetEnvironmentVariable("E2E_DEBUG") == "1")
+        {
+            Console.Error.WriteLine($"[debug] eth_call FAILED to={to} block={blockTag} data={data.ToLowerInvariant()} err={ex.Message}");
+            throw;
+        }
     }
 
     public async Task<string> CallRawAt(string to, string data, string blockTag) => await CallRaw(to, data, blockTag);
@@ -1370,7 +1375,7 @@ public sealed class ChainQueries
 
     static string Short(string h) => h.Length <= 16 ? h : h[..10] + "…" + h[^4..];
 
-    static string Selector(string sig) => Sha3Keccack.Current.CalculateHash(sig)[..10];
+    static string Selector(string sig) => "0x" + Sha3Keccack.Current.CalculateHash(sig)[..8];
 
     static string A32(string address)
     {
