@@ -274,6 +274,19 @@ public static class Program
         Evidence.BackendCommit = beCommit!;
         Pass("backend healthy on chain " + health.ChainId + "; verified build commit " + beCommit);
 
+        Step("0d. API origin recorded (fail-closed exact-match when E2E_REQUIRE_API_ORIGIN is set)");
+        // Persist the API origin so each run is bound to its backend in the evidence header
+        // (a localhost run and a VPS run no longer produce identical headers). For the VPS proof,
+        // set E2E_REQUIRE_API_ORIGIN=<vps origin>: the driver then fail-closes unless E2E_API matches
+        // exactly, which rejects a silent localhost fallback. Local proof runs (localhost) remain valid.
+        var apiOrigin = ApiUrl.TrimEnd('/');
+        var requireOrigin = Environment.GetEnvironmentVariable("E2E_REQUIRE_API_ORIGIN");
+        if (!string.IsNullOrWhiteSpace(requireOrigin))
+            Require(string.Equals(apiOrigin, requireOrigin.TrimEnd('/'), StringComparison.OrdinalIgnoreCase),
+                "E2E_API " + ApiUrl + " != E2E_REQUIRE_API_ORIGIN " + requireOrigin + " (refusing a silent wrong-backend proof)");
+        Evidence.ApiOrigin = apiOrigin;
+        Pass("API origin = " + apiOrigin + (string.IsNullOrWhiteSpace(requireOrigin) ? "" : " (matches required origin)"));
+
         // ---- pre-run snapshot (note 8/the conservation method): ONE pinned block, all reads at that block ----
         PreSnap = await Chain.SnapshotAsync(CollateralUsers);
         Evidence.PreSnapshot = PreSnap;
@@ -1528,6 +1541,7 @@ public sealed class EvidenceBundle
     public Snapshot? PostSnapshot;
     public string? Transcript;
     public string BackendCommit = "";
+    public string ApiOrigin = "";
     public DateTimeOffset StartedAt = DateTimeOffset.UtcNow;
 
     public void RecordTx(string kind, string hash, string? to, string status, string acceptance, string eventSummary)
@@ -1547,6 +1561,7 @@ public sealed class EvidenceBundle
             sb.AppendLine("Run started (UTC): " + StartedAt.ToString("yyyy-MM-dd HH:mm:ss"));
             sb.AppendLine("Driver/backend commit: " + GitCommit() + " (submission monorepo HEAD)");
             sb.AppendLine("Backend build commit (VERIFIED via /v1/version): " + (BackendCommit == "" ? "UNVERIFIED - set E2E_BACKEND_COMMIT" : BackendCommit));
+            sb.AppendLine("Backend API origin (E2E_API): " + (ApiOrigin == "" ? "UNRECORDED" : ApiOrigin));
             sb.AppendLine("Target: chain " + Program.ArcChainId + " RPC " + Program.Rpc);
             sb.AppendLine();
             sb.AppendLine("## Transactions");
