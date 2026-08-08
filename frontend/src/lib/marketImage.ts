@@ -1,5 +1,5 @@
 // Market card imagery, per ASSET_CONTRACT_MARKET_IMAGES.md: assets live at
-// /markets/<category>.svg (Codex generates); the category is inferred from
+// /markets/<category>.svg (pre-generated); the category is inferred from
 // question keywords; "generic" is the catch-all. The card hides the <img> on
 // error, so a missing file degrades to the gradient placeholder.
 

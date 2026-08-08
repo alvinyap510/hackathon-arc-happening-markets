@@ -3,19 +3,19 @@
 // on-chain receipts, DECODED events (including settleBatch calldata), per-participant
 // absolute deltas, backend position completeness, and block-pinned delta conservation.
 //
-// This is the anvil driver ported per PLAN_ARC_LIFECYCLE_PROOF.md §7-§9 (rev 2, HDev2).
+// The anvil lifecycle driver ported to Arc testnet: real chain, real gas, real deadlines.
 // - gas is REAL NATIVE USDC (18-dec) transferred from treasury; anvil_setBalance is gone (D1)
 // - requestId is DECODED from the post tx's OWN receipt (D2), cross-checked vs the API
 // - every tx is receipt-awaited with an explicit timeout; never optimistic (D3)
 // - commit/reveal/born waits DERIVED from mirrored deadlines + buffer (D4)
-// - finalize/resolve/settle hashes from NARROW bounded eth_getLogs (D5/R2-d)
+// - finalize/resolve/settle hashes from NARROW bounded eth_getLogs (no API source for those hashes)
 // - Arc roles load from a gitignored manifest, PREFLIGHTED; operator == deployed role (D9)
-// - settlement classification is DECODED from the on-chain settleBatch calldata (§8.7)
-// - backend positions are enumerated per expected participant/token (§8.6/§8.8)
-// - snapshots are PINNED to a block and delta-conserved vs a pre-run snapshot (§9)
-// - the 1m duration preset is used and its windows asserted (§11b)
-// - every tx hash retained with receipt status + decoded event in the evidence bundle (§10)
-// - standalone approve removed (SubmitDepositAsync approves first) [HCR2-4]
+// - settlement classification is DECODED from the on-chain settleBatch calldata (the acceptance criteria)
+// - backend positions are enumerated per expected participant/token (the acceptance criteria/the acceptance criteria)
+// - snapshots are PINNED to a block and delta-conserved vs a pre-run snapshot (the conservation method)
+// - the 1m duration preset is used and its windows asserted (the duration spec)
+// - every tx hash retained with receipt status + decoded event in the evidence bundle 
+// - standalone approve removed (SubmitDepositAsync approves first)
 //
 // Collateral vs gas are NEVER conflated: MockUSDC is 6-dec (1 USDC = 1_000_000 base);
 // native USDC gas on Arc is 18-dec.
@@ -65,7 +65,7 @@ public static class Program
     const long RevealBufferSec = 8;
 
     internal const string ArcChainId = "5042002";
-    const string DurationPreset = "1m";      // §11b: proof runs use the 1-minute auction
+    const string DurationPreset = "1m";      // the duration spec: proof runs use the 1-minute auction
     const long PresetCommitSec = 40;         // 1m preset: 2/3 commit
     const long PresetRevealSec = 20;         // 1m preset: 1/3 reveal (floored at 20s)
 
@@ -130,7 +130,7 @@ public static class Program
         var calldata = "0x" + Convert.ToHexStringLower(fixture.GetCallData());
         // External anchor: the DTO-derived selector must equal the canonical settleBatch signature
         // selector. This is what prevents a wrong DTO signature from self-validating through its own
-        // encoder (reviewer finding R2-1: derive from the DTO, then anchor against the known hash).
+        // encoder (derive from the DTO, then anchor against the known hash).
         Require(calldata[2..10].Equals("768b5d2e", StringComparison.OrdinalIgnoreCase),
             "derived settleBatch selector " + calldata[2..10] + " != canonical 0x768b5d2e (DTO signature drift)");
         var decoded = Chain.DecodeSettleBatch(calldata);
@@ -240,7 +240,7 @@ public static class Program
         Chain = new ChainQueries(new Web3(new Account(Operator.Key), Rpc), Addrs);
         Api = new ApiClient(ApiUrl);
 
-        // ---- 0. chain identity on the SAME RPC connection, before any write (R2-b) ----
+        // ---- 0. chain identity on the SAME RPC connection, before any write  ----
         Step("0. eth_chainId on the same RPC connection");
         var chainId = await Chain.ChainId();
         Require(chainId.ToString() == ArcChainId, "eth_chainId must be " + ArcChainId + ", got " + chainId + " (" + Rpc + ")");
@@ -274,7 +274,7 @@ public static class Program
         Evidence.BackendCommit = beCommit!;
         Pass("backend healthy on chain " + health.ChainId + "; verified build commit " + beCommit);
 
-        // ---- pre-run snapshot (D8/§9): ONE pinned block, all reads at that block ----
+        // ---- pre-run snapshot (note 8/the conservation method): ONE pinned block, all reads at that block ----
         PreSnap = await Chain.SnapshotAsync(CollateralUsers);
         Evidence.PreSnapshot = PreSnap;
         Pass("pre-run snapshot pinned at block " + PreSnap.Block);
@@ -304,7 +304,7 @@ public static class Program
             Require(deposit.TxHash != null, "deposit tx hash for " + u.Name);
             await RecordTxAsync(deposit.TxHash!, u.Name + "-deposit", Acceptance.DepositIndexed);
             // Recover the backend's approve-before-deposit tx hash via a narrow bounded Approval
-            // query around the deposit block (R2-6: address-level allowlists include the approval).
+            // query around the deposit block (address-level allowlists include the approval).
             var depositTx = await Chain.Web3.Eth.Transactions.GetTransactionByHash.SendRequestAsync(deposit.TxHash!);
             Require(depositTx != null, "deposit tx body for " + u.Name + " not retrievable");
             var depositBlock = depositTx!.BlockNumber?.Value ?? await Chain.BlockNumber();
@@ -346,12 +346,12 @@ public static class Program
             quantity = Qty1000,
             maxPriceTick = MaxTick,
             minMatch = MinMatch200,
-            duration = DurationPreset,   // §11b
+            duration = DurationPreset,   // the duration spec
         });
         Require(post.TxHash != null, "postRequest tx hash");
         PostTxHash = post.TxHash!;
 
-        // D2: decode RequestPosted from the post tx's OWN receipt (causally tied). The evidence row
+        // note 2: decode RequestPosted from the post tx's OWN receipt (causally tied). The evidence row
         // is recorded AFTER the decode using the DECODED requestId + market (not a pre-decode guess).
         var postReceipt = await AwaitReceipt(Chain.Web3, PostTxHash, "rfm-postRequest", TimeSpan.FromSeconds(90));
         var posted = Chain.DecodeRequestPosted(postReceipt);
@@ -367,7 +367,7 @@ public static class Program
         var requestCountAfter = await Chain.RequestCount();
         Require(requestCountAfter > requestCountBefore,
             "RFM.requestCount() did not increase (" + requestCountBefore + " -> " + requestCountAfter + ")");
-        // §9: the pre-run snapshot was taken before this requestId existed; backfill its lock
+        // the conservation method: the pre-run snapshot was taken before this requestId existed; backfill its lock
         // records now, read historically AT the pre-run pinned block (all must be dead/absent).
         await Chain.BackfillLocksAsync(PreSnap, requestId);
         foreach (var (label, refHex, _, amount, live) in PreSnap.Locks)
@@ -379,7 +379,7 @@ public static class Program
         var commitDeadline = Unix(rfmView.CommitDeadline);
         var revealDeadline = Unix(rfmView.RevealDeadline);
         Require(commitDeadline > 0 && revealDeadline > commitDeadline, "mirrored deadlines sane");
-        // §11b: the 1m preset must mirror exactly 40s commit and a 20s reveal span.
+        // the duration spec: the 1m preset must mirror exactly 40s commit and a 20s reveal span.
         Require(revealDeadline - commitDeadline == PresetRevealSec,
             "mirrored reveal span " + (revealDeadline - commitDeadline) + "s != " + PresetRevealSec + "s (1m preset)");
         Require(Math.Abs((commitDeadline - postStart) - PresetCommitSec) <= 2,
@@ -405,7 +405,7 @@ public static class Program
             return v?.Born is { MarketId: not null } ? v.Born : null;
         }, b => b != null);
         Require(born != null, "MarketBorn");
-        // R2-d: finalize (MarketBorn) tx has no API hash; NARROW bounded query around the observed block.
+        // finalize (MarketBorn) tx has no API hash; NARROW bounded query around the observed block.
         var bornBlock = await Chain.BlockNumber();
         var bornLog = await Chain.FindEventAroundAsync(Addrs.Rfm, bornBlock, new MarketBornEventDTO(), null, "MarketBorn");
         Require(bornLog != null, "MarketBorn log not found near block " + bornBlock);
@@ -486,7 +486,7 @@ public static class Program
         {
             var b = await Api.GetAsync<BalancesView>(Tokens[u.Address], "/v1/balances");
             Require(BigInteger.Parse(b.Reserved) == 0, "stuck order reservation for " + u.Name);
-            // R1-2/R2-3/R2-5: the backend must also report ZERO asset-scoped (per-token) reservations
+            // the backend must also report ZERO asset-scoped (per-token) reservations
             // — a stranded SELL would make the venue under-report a token position. /v1/balances now
             // carries `reserved` per position; assert it is zero for every position.
             Require(b.Positions.All(p => BigInteger.Parse(p.Reserved ?? "0") == 0),
@@ -495,7 +495,7 @@ public static class Program
         await AssertPositionsAsync(Expected.Tokens("after-redeem"));
         Pass("terminal state clean: RFM locks dead, no stuck USDC or token reservations");
 
-        Step("18. delta conservation (§9, block-pinned)");
+        Step("18. delta conservation (the conservation method, block-pinned)");
         var postSnap = await Chain.SnapshotAsync(CollateralUsers, CurrentYesId, CurrentNoId, requestId);
         Evidence.PostSnapshot = postSnap;
         AssertConservation(PreSnap, postSnap);
@@ -629,7 +629,7 @@ public static class Program
     /// <summary>
     /// Capture the N-th BatchSettled tx on the born market, DECODE its settleBatch calldata, and
     /// assert market/class/parties/tick/size plus that the API fill's tradeId appears in the
-    /// on-chain tradeIds (§8.7) — not just the API label.
+    /// on-chain tradeIds (the acceptance criteria) — not just the API label.
     /// </summary>
     static async Task CaptureBatchAsync(int nth, string label, List<FillView> fills)
     {
@@ -670,7 +670,7 @@ public static class Program
         => await WaitUntil(TimeSpan.FromSeconds(180), async () => (await Api.GetMarketAsync(CurrentMarketId)).Trades.Count >= expected, expected + " trades settled");
 
     /// <summary>
-    /// §8.6/§8.8 + §8.10: per-participant ABSOLUTE on-chain token balances (born market is unique)
+    /// the acceptance criteria/the acceptance criteria + the acceptance criteria: per-participant ABSOLUTE on-chain token balances (born market is unique)
     /// and usdc deltas from the pre-run snapshot, PLUS backend position completeness — every
     /// expected (participant, token) must be reported with the exact amount, and no unexpected
     /// nonzero position on the born market may appear.
@@ -705,7 +705,7 @@ public static class Program
             {
                 if (p.MarketId == null || p.Outcome == null || !SameHex(p.MarketId, CurrentMarketId)) continue;
                 var id = await Chain.TokenIdHex(p.MarketId!, p.Outcome!.Equals("no", StringComparison.OrdinalIgnoreCase) ? (byte)1 : (byte)0);
-                // R1-2/R2-3: a stranded SELL would surface as a nonzero asset-scoped token reservation
+                // a stranded SELL would surface as a nonzero asset-scoped token reservation
                 // here (the /v1/balances payload now carries reserved per position). Zero required.
                 Require(BigInteger.Parse(p.Reserved ?? "0") == 0,
                     who.Name + " token position " + shortHash(id) + " carries nonzero reservation " + p.Reserved);
@@ -748,7 +748,7 @@ public static class Program
         Pass("per-participant absolute deltas + backend position completeness on-chain");
     }
 
-    /// <summary>§8.10/§9: post-run RFM lock refs (escrow, institution bond, mm bonds, mm reveal
+    /// <summary>the acceptance criteria/the conservation method: post-run RFM lock refs (escrow, institution bond, mm bonds, mm reveal
     /// locks) must all be dead — stranded locks are a failure, not "remaining escrow".</summary>
     static async Task AssertTerminalLocksAsync(BigInteger requestId)
     {
@@ -761,7 +761,7 @@ public static class Program
         }
         foreach (var u in CollateralUsers)
             Require(await Chain.LockedBal(u.Address) == 0, "lockedBal != 0 for " + u.Name + " (stranded RFM lock)");
-        // R2-5: the SAME refs were pinned into the post-run snapshot (block-pinned evidence); the
+        // the SAME refs were pinned into the post-run snapshot (block-pinned evidence); the
         // snapshot's lock rows must all be dead too, so a wrong ref cannot silently pass.
         if (Evidence.PostSnapshot != null)
         {
@@ -802,7 +802,7 @@ public static class Program
 
     static async Task<string> SendContractAsync(Web3 web3, string to, FunctionMessage msg, string kind, string acceptance)
     {
-        // R2-1/R2-6: submit returns ONLY the hash, then we receipt-await with an explicit timeout
+        // submit returns ONLY the hash, then we receipt-await with an explicit timeout
         // (D3) — never a one-shot SendRequestAndWaitForReceipt that can hang the run (mints).
         var hash = await web3.Eth.GetContractHandler(to).SendRequestAsync(msg);
         Require(!string.IsNullOrWhiteSpace(hash), "tx to " + to + " produced no hash");
@@ -824,7 +824,7 @@ public static class Program
         return hash!;
     }
 
-    /// <summary>D3: every hash is receipt-awaited with an explicit timeout, then recorded with its
+    /// <summary>note 3: every hash is receipt-awaited with an explicit timeout, then recorded with its
     /// status/block AND the decoded event (deposit/commit/reveal/redeem), so the evidence proves the
     /// on-chain effect — not just a submitted hash.</summary>
     static async Task RecordTxAsync(string txHash, string kind, string acceptance)
@@ -1176,7 +1176,7 @@ public sealed class ChainQueries
         return tail; // abi.encode dynamic string tail: [len][padded]
     }
 
-    // ---- settlement calldata decode (§8.7) ----
+    // ---- settlement calldata decode (the acceptance criteria) ----
 
     public sealed record DecodedTrade(string TradeId, string MarketId, byte Class, byte? Outcome, string PartyA, string PartyB, BigInteger Tick, BigInteger Size);
 
@@ -1309,7 +1309,7 @@ public sealed class ChainQueries
         Console.WriteLine($"  [tx] {label}: {Short(txHash)} status=success block={receipt.BlockNumber?.Value} {decodedEvent}");
     }
 
-    // ---- block-pinned snapshot (§9) ----
+    // ---- block-pinned snapshot (the conservation method) ----
 
     internal async Task<Snapshot> SnapshotAsync(IReadOnlyList<Program.Role> roles, string? yesId = null, string? noId = null, BigInteger? requestId = null)
     {
@@ -1327,7 +1327,7 @@ public sealed class ChainQueries
             if (yesId != null) s.Tokens[(r.Address, yesId)] = await CallAt(_a.Vault, TokenBalSel + A32(r.Address) + U256(HexToU256(yesId)), blockTag);
             if (noId != null) s.Tokens[(r.Address, noId)] = await CallAt(_a.Vault, TokenBalSel + A32(r.Address) + U256(HexToU256(noId)), blockTag);
         }
-        // RFM lock refs pinned to the same block (R2-5): the evidence carries the exact refs, and the
+        // RFM lock refs pinned to the same block : the evidence carries the exact refs, and the
         // terminal assert proves the ones we watched (escrow, bonds, reveal) are dead.
         if (requestId != null)
         {
@@ -1418,15 +1418,15 @@ public sealed class Snapshot
 
 public static class Acceptance
 {
-    public const string GasFunded = "§8.1 chain identity + gas preflight";
-    public const string MintCollateral = "§8.2 collateral minted";
-    public const string DepositIndexed = "§8.8 deposits settle + ledger";
-    public const string RequestPosted = "§8.2 request posted + decoded RequestPosted";
-    public const string SignedQuote = "§8.3/§8.4 commit+reveal";
-    public const string MarketBorn = "§8.5 MarketBorn + marginal!=vwap";
-    public const string CrossingSettled = "§8.7/§8.8 crossing TradeClass (decoded) + deltas";
-    public const string Resolved = "§8.9 resolution";
-    public const string RedeemExact = "§8.9 redeem 1:1";
+    public const string GasFunded = "the acceptance criteria chain identity + gas preflight";
+    public const string MintCollateral = "the acceptance criteria collateral minted";
+    public const string DepositIndexed = "the acceptance criteria deposits settle + ledger";
+    public const string RequestPosted = "the acceptance criteria request posted + decoded RequestPosted";
+    public const string SignedQuote = "the acceptance criteria/the acceptance criteria commit+reveal";
+    public const string MarketBorn = "the acceptance criteria MarketBorn + marginal!=vwap";
+    public const string CrossingSettled = "the acceptance criteria/the acceptance criteria crossing TradeClass (decoded) + deltas";
+    public const string Resolved = "the acceptance criteria resolution";
+    public const string RedeemExact = "the acceptance criteria redeem 1:1";
 }
 
 public sealed class EvidenceBundle

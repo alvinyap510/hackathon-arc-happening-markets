@@ -7,7 +7,7 @@ namespace Venue.Circle;
 /// Circle API key is configured; otherwise the host falls back to the Mock. The exact
 /// endpoint shapes were authored from the developers.circle.com documentation surface
 /// captured in the STACK pad; treat as best-effort until diffed against the live API on
-/// Arc testnet (see BUILD_REPORT). Never logs credentials.
+/// Arc testnet. Never logs credentials.
 /// </summary>
 public sealed class CircleServicesHttp : ICircleServices
 {
