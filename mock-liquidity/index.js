@@ -34,7 +34,7 @@ if (ADDRESSES.length < 1 && import.meta.url === pathToFileURL(process.argv[1] ||
 const AGENT = (ADDRESSES[0] || '').toLowerCase();
 let token = null;
 
-export { rungs, legCost, wouldCross };
+export { rungs, legCost, wouldCross, reconcileRow, rowFor, journal };
 
 // --------------------------------------------------------------- journal
 let journal = [];     // { marketId, bid: {placed, orderId}, ask: {placed, orderId} }

@@ -43,7 +43,7 @@ if (ADDRESSES.length < 2 && import.meta.url === pathToFileURL(process.argv[1] ||
 const IDENTITIES = ADDRESSES.map(a => a.toLowerCase()).sort();
 const tokens = {};                       // address -> Bearer token
 
-export { quoteFor, counterLeg, outstandingLiabilities, hasOtherActiveAuction, journal };
+export { quoteFor, counterLeg, outstandingLiabilities, hasOtherActiveAuction, journal, tick, driveRow, isDraining };
 
 // --------------------------------------------------------------- journal
 let journal = [];
@@ -156,109 +156,107 @@ function hasOtherActiveAuction(agent, requestId) {
   return journal.some(r => r.agent === agent && !r.terminal && r.requestId !== requestId);
 }
 
-async function handleRequest(request) {
-  const now = Math.floor(Date.now() / 1000);
-  const requestId = request.requestId;
-  const phase = request.phase;
-  if (phase === 'finalized' || phase === 'failed' || phase === 'cancelled') {
-    // mark all our rows for this request terminal
+// Drain control (HCR2-6): when `${JOURNAL_DIR}/.drain` exists, the quoter stops
+// OPENING new auctions but keeps driving existing rows through reveal/terminal, so
+// `stop` no longer kills in-flight reveals mid-window (which would slash bonds).
+function isDraining() { return existsSync(`${JOURNAL_DIR}/.drain`); }
+
+// Create journal rows for a fresh request view (domain check + drain + one-active
+// gate). Does NOT drive — driving is from stored fields in tick() via driveRow().
+function createRowsForView(view) {
+  const requestId = view.requestId;
+  if (view.phase === 'finalized' || view.phase === 'failed' || view.phase === 'cancelled') {
     for (const r of journal) if (r.requestId === requestId) r.terminal = true;
     return;
   }
   for (let i = 0; i < IDENTITIES.length; i++) {
     const agent = IDENTITIES[i];
-    const q = quoteFor(request, i);
+    const q = quoteFor(view, i);
     if (!q) { console.log(`[mock-quoter] req ${requestId} ${agent}: outside supported domain, skip`); continue; }
-    const ctx = { tick: q.tick, size: q.size.toString(),
-                  commitDeadline: Number(request.commitDeadline), revealDeadline: Number(request.revealDeadline) };
-    // One-active-auction gate: do not OPEN a new commit for an identity that already
-    // has another non-terminal auction (PLAN §5.5). Resuming an existing row is allowed.
-    let row = rowFor(requestId, agent);
-    if (!row && hasOtherActiveAuction(agent, requestId)) { console.log(`[mock-quoter] req ${requestId} ${agent}: another auction active, skip`); continue; }
-    row = ensureRow(requestId, agent, ctx);
-    if (row.terminal) continue;
-    const revealedHere = (request.reveals || []).some(rv => String(rv.mm).toLowerCase() === agent);
-    if (row.reveal.state === 'confirmed' || revealedHere) { row.reveal.state = 'confirmed'; continue; }
-
-    // COMMIT window
-    if (now <= ctx.commitDeadline && row.commit.state !== 'confirmed') {
-      const need = RFM_BOND + counterLeg(q.size, q.tick) + outstandingLiabilities(agent, requestId);
-      const avail = await availableFor(agent);
-      if (avail == null) { console.log(`[mock-quoter] req ${requestId} ${agent}: balance read failed`); continue; }
-      if (avail < need) { console.log(`[mock-quoter] req ${requestId} ${agent}: insufficient available ${avail} < ${need}, skip`); continue; }
-      // submit commit (omit salt -> backend derives deterministic salt)
-      row.commit.state = 'intent'; await saveJournal();
-      const r = await call(agent, 'POST', '/v1/rfm/commit', { RequestId: requestId, PriceTick: q.tick, Size: ctx.size });
-      if (r.status === 200 && r.json?.txHash) {
-        row.commit.state = 'submitted'; row.commit.txHash = r.json.txHash; await saveJournal();
-        // bounded poll; if it confirms, great; if still pending, the next loop tick re-submits (idempotent overwrite, RFM.sol:188-203)
-        for (let p = 0; p < TX_POLLS; p++) {
-          const st = await txStatus(agent, r.json.txHash);
-          if (st === 'confirmed') { row.commit.state = 'confirmed'; await saveJournal(); break; }
-          if (st === 'reverted') { row.commit.state = 'intent'; await saveJournal(); break; }
-          await sleep(TX_POLL_DELAY_MS);
-        }
-      } else {
-        console.log(`[mock-quoter] req ${requestId} ${agent}: commit POST failed status=${r.status}`);
-      }
-      continue;
-    }
-
-    // REVEAL window: attempt for every commit intent|submitted|confirmed (not only confirmed).
-    // Preflight excludes the current row from outstanding (its counter-leg is counted directly).
-    if (now > ctx.commitDeadline && now <= ctx.revealDeadline &&
-        (row.commit.state === 'intent' || row.commit.state === 'submitted' || row.commit.state === 'confirmed')) {
-      const need = counterLeg(q.size, q.tick) + outstandingLiabilities(agent, requestId);
-      const avail = await availableFor(agent);
-      if (avail != null && avail < need) { console.log(`[mock-quoter] req ${requestId} ${agent}: insufficient for reveal, skip`); continue; }
-      row.reveal.state = 'intent'; await saveJournal();
-      const r = await call(agent, 'POST', '/v1/rfm/reveal', { RequestId: requestId, PriceTick: q.tick, Size: ctx.size });
-      if (r.status === 200 && r.json?.txHash) {
-        row.reveal.state = 'submitted'; row.reveal.txHash = r.json.txHash; await saveJournal();
-        for (let p = 0; p < TX_POLLS; p++) {
-          const st = await txStatus(agent, r.json.txHash);
-          if (st === 'confirmed') { row.reveal.state = 'confirmed'; await saveJournal(); break; }
-          if (st === 'reverted') { row.reveal.state = 'intent'; await saveJournal(); break; }
-          await sleep(TX_POLL_DELAY_MS);
-        }
-      } else if (r.status === 400) {
-        // `not committed` (reveal of an intent that never landed) reverts harmlessly;
-        // a duplicate/already-revealed is also a 400. Either way stop retrying this hash.
-        console.log(`[mock-quoter] req ${requestId} ${agent}: reveal 400 (${r.json?.error || ''})`);
-      } else {
-        console.log(`[mock-quoter] req ${requestId} ${agent}: reveal POST status=${r.status}`);
-      }
-      continue;
-    }
-
-    // EXPIRED: past reveal window, reveal not confirmed, request not terminal
-    if (now > ctx.revealDeadline) {
-      row.expired = true; await saveJournal();
-    }
+    if (rowFor(requestId, agent)) continue;                          // already tracking
+    if (isDraining()) { console.log(`[mock-quoter] drain: skip new row req ${requestId} ${agent}`); continue; }
+    if (hasOtherActiveAuction(agent, requestId)) { console.log(`[mock-quoter] req ${requestId} ${agent}: another auction active, skip`); continue; }
+    ensureRow(requestId, agent, { tick: q.tick, size: q.size.toString(),
+              commitDeadline: Number(view.commitDeadline), revealDeadline: Number(view.revealDeadline) });
   }
+}
+
+// Drive a stored row from its OWN tick/size/deadlines — NO GET required (HCR1-3/HCR2-3).
+// `view` (optional) only enriches: confirms a reveal seen on chain and observes a
+// terminal phase. A missing/torn GET never suppresses a legal commit/reveal.
+async function driveRow(row, view) {
+  if (row.terminal) return;
+  const now = Math.floor(Date.now() / 1000);
+  if (view) {
+    if (view.phase === 'finalized' || view.phase === 'failed' || view.phase === 'cancelled') { row.terminal = true; await saveJournal(); return; }
+    if ((view.reveals || []).some(rv => String(rv.mm).toLowerCase() === row.agent)) row.reveal.state = 'confirmed';
+  }
+  if (row.reveal.state === 'confirmed') return;
+  const tick = row.tick;
+  const size = BigInt(row.size);
+
+  // COMMIT window
+  if (now <= row.commitDeadline && row.commit.state !== 'confirmed') {
+    const need = RFM_BOND + counterLeg(size, tick) + outstandingLiabilities(row.agent, row.requestId);
+    const avail = await availableFor(row.agent);
+    if (avail == null) { console.log(`[mock-quoter] req ${row.requestId} ${row.agent}: balance read failed`); return; }
+    if (avail < need) { console.log(`[mock-quoter] req ${row.requestId} ${row.agent}: insufficient available ${avail} < ${need}, skip`); return; }
+    row.commit.state = 'intent'; await saveJournal();
+    const r = await call(row.agent, 'POST', '/v1/rfm/commit', { RequestId: row.requestId, PriceTick: tick, Size: row.size });
+    if (r.status === 200 && r.json?.txHash) {
+      row.commit.state = 'submitted'; row.commit.txHash = r.json.txHash; await saveJournal();
+      for (let p = 0; p < TX_POLLS; p++) {
+        const st = await txStatus(row.agent, r.json.txHash);
+        if (st === 'confirmed') { row.commit.state = 'confirmed'; await saveJournal(); break; }
+        if (st === 'reverted') { row.commit.state = 'intent'; await saveJournal(); break; }
+        await sleep(TX_POLL_DELAY_MS);
+      }
+    } else console.log(`[mock-quoter] req ${row.requestId} ${row.agent}: commit POST failed status=${r.status}`);
+    return;
+  }
+
+  // REVEAL window: attempt for every commit intent|submitted|confirmed (not only confirmed).
+  if (now > row.commitDeadline && now <= row.revealDeadline &&
+      (row.commit.state === 'intent' || row.commit.state === 'submitted' || row.commit.state === 'confirmed')) {
+    const need = counterLeg(size, tick) + outstandingLiabilities(row.agent, row.requestId);
+    const avail = await availableFor(row.agent);
+    if (avail != null && avail < need) { console.log(`[mock-quoter] req ${row.requestId} ${row.agent}: insufficient for reveal, skip`); return; }
+    row.reveal.state = 'intent'; await saveJournal();
+    const r = await call(row.agent, 'POST', '/v1/rfm/reveal', { RequestId: row.requestId, PriceTick: tick, Size: row.size });
+    if (r.status === 200 && r.json?.txHash) {
+      row.reveal.state = 'submitted'; row.reveal.txHash = r.json.txHash; await saveJournal();
+      for (let p = 0; p < TX_POLLS; p++) {
+        const st = await txStatus(row.agent, r.json.txHash);
+        if (st === 'confirmed') { row.reveal.state = 'confirmed'; await saveJournal(); break; }
+        if (st === 'reverted') { row.reveal.state = 'intent'; await saveJournal(); break; }
+        await sleep(TX_POLL_DELAY_MS);
+      }
+    } else if (r.status === 400) {
+      console.log(`[mock-quoter] req ${row.requestId} ${row.agent}: reveal 400 (${r.json?.error || ''})`);
+    } else console.log(`[mock-quoter] req ${row.requestId} ${row.agent}: reveal POST status=${r.status}`);
+    return;
+  }
+
+  if (now > row.revealDeadline) { row.expired = true; await saveJournal(); }
 }
 
 // --------------------------------------------------------------- loop
 async function tick() {
   try {
-    let seen = new Set();
     const r = await api('GET', '/v1/rfm/requests', null, null);
+    const views = new Map();
     if (r.status === 200 && Array.isArray(r.json)) {
       if (backendDown) { backendDown = false; console.log('[mock-quoter] backend reachable again'); }
-      for (const req of r.json) await handleRequest(req);
-      seen = new Set(r.json.map(x => x.requestId));
+      for (const req of r.json) { createRowsForView(req); views.set(req.requestId, req); }
     } else {
-      if (!backendDown) { backendDown = true; console.log(`[mock-quoter] GET /v1/rfm/requests -> ${r.status}; driving journal rows from stored deadlines`); }
-      // collection GET failed — do NOT return; fall through to drive journal rows.
+      if (!backendDown) { backendDown = true; console.log(`[mock-quoter] GET /v1/rfm/requests -> ${r.status}; driving stored rows from deadlines`); }
     }
-    // Drive journal rows not seen in the collection from their stored deadlines
-    // (PLAN §5.3). A torn/missing GET is a RETRY, never a terminal decision (HCR2-3):
-    // only an observed terminal phase (via handleRequest) marks a row terminal.
+    // Drive EVERY non-terminal row from its OWN stored tick/size/deadlines — no GET
+    // required (HCR1-3/HCR2-3). The view only enriches when the collection was
+    // reachable; a torn/missing GET never suppresses a legal commit/reveal.
     for (const row of journal) {
-      if (row.terminal || seen.has(row.requestId)) continue;
-      const rr = await api('GET', `/v1/rfm/requests/${row.requestId}`, null, null);
-      if (rr.status === 200 && rr.json) await handleRequest(rr.json);
-      // else: retry next tick — do NOT mark terminal.
+      if (row.terminal) continue;
+      await driveRow(row, views.get(row.requestId) || null);
     }
     await saveJournal();
   } catch (e) { console.error('[mock-quoter] loop error', e.message); }
