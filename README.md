@@ -1,6 +1,14 @@
-# Request for Market (RFM)
+# Happening Markets — Arc Programmable Money Hackathon Submission 
 
-Prediction market infrastructure for institutional hedging, built on Arc.
+We built a full-stack prediction market platform around a new primitive: **Request for Market (RFM)** - turning institutional hedge demand into funded, tradable markets from day one.
+
+Built from the ground up on Arc.
+
+## Deck
+
+## Frontend
+
+## Deployed Contracts
 
 ## What we are building
 
