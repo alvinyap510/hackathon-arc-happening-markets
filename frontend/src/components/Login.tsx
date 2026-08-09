@@ -48,12 +48,12 @@ export default function Login() {
             {busy ? "Creating your wallet…" : "Continue"}
           </button>
           <p className="mt-4 text-center text-xs leading-relaxed text-ink-400">
-            Email is your wallet. No seed phrase, no gas.
+            Email is your wallet. No seed phrase to manage.
           </p>
         </form>
 
         <p className="mt-6 text-center text-[11px] text-ink-500">
-          Built on Arc · USDC-native settlement · Gas Station sponsored
+          Built on Arc · USDC-native settlement
         </p>
       </div>
     </div>

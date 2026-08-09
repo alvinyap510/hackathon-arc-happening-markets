@@ -79,3 +79,5 @@ Visualization: https://happening-markets-arc-hackathon.netlify.app/6
 ## Known Limitations
 
 - **We trade a mock USDC as collateral.** Arc's system USDC is issued by Circle and cannot be minted at test size, so the venue uses a self-deployed 6-decimal mock instead. Gas is still paid in real Arc USDC. The contracts take the collateral address as a parameter, so production points at the real USDC with no code change.
+
+- **The market makers are ours.** There are no third-party desks on testnet, so we run the makers as our own EOAs quoting algorithmically. They go through the real RFM process end to end: sealed commit, bonded, revealed on chain, matched by the contract. The competition is simulated, the mechanism is real.

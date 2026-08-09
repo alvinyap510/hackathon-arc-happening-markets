@@ -89,7 +89,7 @@ export default function Layout({
             </div>
           </div>
           <p className="px-1 text-[10px] leading-relaxed text-ink-500">
-            All funds move on chain. Gas sponsored.
+            All funds move on chain.
           </p>
         </div>
       </aside>
