@@ -71,16 +71,27 @@ export default function Layout({
           <div className="panel-inset p-3">
             <div className="label-caps">Wallet</div>
             {session ? (
-              <a
-                href={addressUrl(session.address)}
-                target="_blank"
-                rel="noreferrer"
-                title={`${session.address} · view on Arcscan`}
-                className="num mt-1 inline-flex items-center gap-1 text-xs text-paper-200 transition-colors hover:text-gold-300"
-              >
-                {shortAddr(session.address)}
-                <span className="text-[9px] text-ink-400 group-hover:text-gold-300">↗</span>
-              </a>
+              <div className="group/addr relative mt-1">
+                <a
+                  href={addressUrl(session.address)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="num inline-flex items-center gap-1 text-xs text-paper-200 transition-colors hover:text-gold-300"
+                >
+                  {shortAddr(session.address)}
+                  <span className="text-[9px] text-ink-400 transition-colors group-hover/addr:text-gold-300">↗</span>
+                </a>
+                {/* instant, styled tooltip — sits ABOVE the row so it never covers the balances */}
+                <div
+                  role="tooltip"
+                  className="pointer-events-none absolute bottom-full left-0 z-50 mb-2 w-max max-w-[15rem] origin-bottom-left scale-95 rounded-lg border border-ink-700 bg-ink-950/95 px-2.5 py-2 opacity-0 shadow-xl shadow-black/50 backdrop-blur-sm transition-all duration-100 group-hover/addr:scale-100 group-hover/addr:opacity-100"
+                >
+                  <div className="num text-[10px] leading-relaxed break-all text-paper-200">{session.address}</div>
+                  <div className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-gold-300">
+                    View on Arcscan <span aria-hidden>↗</span>
+                  </div>
+                </div>
+              </div>
             ) : (
               <div className="num mt-1 text-xs text-paper-200">—</div>
             )}
