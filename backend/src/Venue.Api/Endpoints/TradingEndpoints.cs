@@ -196,10 +196,18 @@ public static class TradingEndpoints
         catch (KeyNotFoundException) { /* market not born yet: one-sided/null mid */ }
 
         MarketMetadata? meta = null;
+        string? postedTxHash = null;
+        string? bornTxHash = null;
         if (m.BornRequestId != null)
         {
             var rfm = await core.GetRfmRequestAsync(m.BornRequestId.Value);
-            if (rfm != null) meta = metadata.Get(rfm.Market);
+            if (rfm != null)
+            {
+                meta = metadata.Get(rfm.Market);
+                // provenance: the request tx and the birth tx, so the card can link both
+                postedTxHash = rfm.PostedTxHash;
+                bornTxHash = rfm.BornTxHash;
+            }
         }
         else
         {
@@ -219,7 +227,7 @@ public static class TradingEndpoints
             winningOutcome = m.WinningOutcome?.ToString().ToLowerInvariant(),
             bornFromRfm = m.BornRequestId != null,
             midTick,
-            born = m.BornRequestId == null ? null : new { requestId = m.BornRequestId.ToString(), marginalYesTick = m.BornMarginalYesTick, vwapYesTick = m.BornVwapYesTick, filled = m.BornFilledQuantity?.ToString() },
+            born = m.BornRequestId == null ? null : new { requestId = m.BornRequestId.ToString(), marginalYesTick = m.BornMarginalYesTick, vwapYesTick = m.BornVwapYesTick, filled = m.BornFilledQuantity?.ToString(), postedTxHash, txHash = bornTxHash },
         };
     }
 

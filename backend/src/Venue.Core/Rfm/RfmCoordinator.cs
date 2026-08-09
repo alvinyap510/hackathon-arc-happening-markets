@@ -40,6 +40,7 @@ public sealed class RfmCoordinator
                     RevealDeadline = p.RevealDeadline,
                     EscrowAmount = p.EscrowAmount,
                     MinQuoteSize = p.MinQuoteSize,
+                    PostedTxHash = p.TxHash,
                 };
                 break;
             case RfmMarketReserved r:
@@ -73,6 +74,7 @@ public sealed class RfmCoordinator
                     rb.BornMarginalYesTick = (long)b.MarginalYesTick;
                     rb.BornVwapYesTick = (long)b.VwapYesTick;
                     rb.BornFilledQuantity = b.FilledQuantity;
+                    rb.BornTxHash = b.TxHash;
                 }
                 _requestByMarket[b.MarketId] = b.RequestId;
                 break;

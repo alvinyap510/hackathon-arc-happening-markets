@@ -147,7 +147,8 @@ public static class RfmEndpoints
             minQuoteSize = r.MinQuoteSize.ToString(),
             commitCount = r.CommitCount.ToString(),
             phase = r.PhaseAt(now).ToString().ToLowerInvariant(),
-            born = r.MarketId == null ? null : new { marketId = r.MarketId, marginalYesTick = r.BornMarginalYesTick, vwapYesTick = r.BornVwapYesTick, filled = r.BornFilledQuantity?.ToString() },
+            postedTxHash = r.PostedTxHash,
+            born = r.MarketId == null ? null : new { marketId = r.MarketId, marginalYesTick = r.BornMarginalYesTick, vwapYesTick = r.BornVwapYesTick, filled = r.BornFilledQuantity?.ToString(), txHash = r.BornTxHash },
             reveals = r.Reveals.Select(v => new { mm = v.Mm, tick = v.Tick.ToString(), size = v.Size.ToString(), inRange = v.InRange }).ToList(),
             fills = r.Fills.Select(f => new { mm = f.Mm, tick = f.Tick.ToString(), size = f.Size.ToString() }).ToList(),
         };

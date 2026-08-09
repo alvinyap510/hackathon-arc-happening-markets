@@ -23,6 +23,8 @@ public sealed class RfmRequestMirror
     public required BigInteger RevealDeadline { get; init; }
     public required BigInteger EscrowAmount { get; init; }
     public required BigInteger MinQuoteSize { get; init; }
+    /// <summary>Tx that emitted RequestPosted - the on-chain receipt for the request itself.</summary>
+    public string? PostedTxHash { get; init; }
 
     public BigInteger CommitCount { get; set; }
     public bool Finalized { get; set; }
@@ -33,6 +35,8 @@ public sealed class RfmRequestMirror
     public long? BornMarginalYesTick { get; set; }
     public long? BornVwapYesTick { get; set; }
     public BigInteger? BornFilledQuantity { get; set; }
+    /// <summary>Tx that emitted MarketBorn - the on-chain receipt for "collateral locked".</summary>
+    public string? BornTxHash { get; set; }
 
     public List<RevealView> Reveals { get; } = new();
     public List<(string Mm, BigInteger Tick, BigInteger Size)> Fills { get; } = new();
