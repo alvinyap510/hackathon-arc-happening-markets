@@ -33,6 +33,7 @@ interface Store {
   bornPulse: number;
   wallet: string | null; // mock mode only
   login(email: string): Promise<void>;
+  logout(): void;
   refreshBalances(): Promise<void>;
   refreshMarkets(): Promise<void>;
   notifyBorn(): void;
@@ -74,6 +75,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [api, refreshBalances, refreshMarkets],
   );
 
+  const logout = useCallback(() => {
+    if (!api) return;
+    api.logout();
+    setSession(null);
+    setBalances(null);
+    setWallet(null);
+  }, [api]);
+
   // initial market load once the api exists (markets render even pre-login)
   useEffect(() => {
     if (api) void refreshMarkets();
@@ -95,6 +104,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       bornPulse,
       wallet,
       login,
+      logout,
       refreshBalances,
       refreshMarkets,
       notifyBorn: () => {
@@ -102,7 +112,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         void refreshMarkets();
       },
     };
-  }, [api, session, balances, markets, bornPulse, wallet, login, refreshBalances, refreshMarkets]);
+  }, [api, session, balances, markets, bornPulse, wallet, login, logout, refreshBalances, refreshMarkets]);
 
   if (!value) return null;
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

@@ -19,7 +19,7 @@ export default function Layout({
   onTab: (t: Tab) => void;
   children: ReactNode;
 }) {
-  const { session, balances, bornPulse, wallet } = useStore();
+  const { session, balances, bornPulse, wallet, logout } = useStore();
   const [ping, setPing] = useState(false);
 
   useEffect(() => {
@@ -69,7 +69,18 @@ export default function Layout({
 
         <div className="mt-auto space-y-3">
           <div className="panel-inset p-3">
-            <div className="label-caps">Wallet</div>
+            <div className="flex items-center justify-between">
+              <span className="label-caps">Wallet</span>
+              {session && (
+                <button
+                  onClick={logout}
+                  title="Sign out"
+                  className="rounded px-1.5 py-0.5 text-[10px] font-semibold text-ink-400 transition-colors hover:bg-ink-800 hover:text-paper-200"
+                >
+                  Sign out
+                </button>
+              )}
+            </div>
             {session ? (
               <div className="group/addr relative mt-1">
                 <a
@@ -97,7 +108,7 @@ export default function Layout({
             )}
             <div className="mt-2 space-y-1 text-[11px]">
               <div className="flex justify-between text-ink-300">
-                <span>Venue available</span>
+                <span>Platform USDC</span>
                 <span className="num text-paper-200">{balances ? formatUsdc(balances.available) : "0"}</span>
               </div>
               <div className="flex justify-between text-ink-300">

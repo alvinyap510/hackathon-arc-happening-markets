@@ -83,6 +83,30 @@ export class RealApi implements VenueApi {
     return { email, address: s.address, token: s.token, gasless: s.gasless };
   }
 
+  /** Drop the bearer and tear the socket down so no stale user channel survives
+   *  the next login. onclose is cleared first: the reconnect timer must not
+   *  revive a socket for a session that no longer exists. */
+  logout(): void {
+    this.token = null;
+    const ws = this.ws;
+    this.ws = null;
+    if (ws) {
+      ws.onclose = null;
+      ws.onmessage = null;
+      ws.onopen = null;
+      try {
+        ws.close();
+      } catch {
+        // already closing: nothing to do
+      }
+    }
+    this.listeners.clear();
+    this.chanState.clear();
+    this.dirty.clear();
+    this.snapToken.clear();
+    this.rfmInflight.clear();
+  }
+
   async getBalances(): Promise<Balances> {
     const v = await this.req<BalancesView>("GET", "/balances");
     return {

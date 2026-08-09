@@ -22,6 +22,8 @@ export interface VenueApi {
   readonly mode: "mock" | "real";
 
   login(email: string): Promise<Session>;
+  /** Drop the session credential (and any live socket) so the next login starts clean. */
+  logout(): void;
   getBalances(): Promise<Balances>;
 
   listMarkets(): Promise<Market[]>;

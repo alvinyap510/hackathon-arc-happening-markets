@@ -93,6 +93,10 @@ export class MockApi implements VenueApi {
     return { email, address, token: "mock-session" };
   }
 
+  logout(): void {
+    this.venue.sessionAddr = "";
+  }
+
   async getBalances(): Promise<Balances> {
     return this.venue.balances();
   }
