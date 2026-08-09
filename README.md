@@ -58,6 +58,12 @@ Visualization: https://happening-markets-arc-hackathon.netlify.app/6
 4. **Match.** When the window closes, the cheapest quotes win in price order. If enough is filled, collateral locks, positions are created, and the market is born.
 5. **Live market.** The market opens to the public. The institution already holds its hedge at an agreed price, and everyone else trades around it.
 
+## Why Arc
+
+1. We believe in Arc's vision of bringing institutional finance on chain, and we are building the same bridge one layer up: institutional hedging demand into prediction markets.
+
+2. Arc's USDC-native gas and its surrounding stack, such as Gas Station, make it far easier for us to onboard both institutions and everyday users, with the seamless web2-like experience each of them expects.
+
 ## Repository Layout
 
 | Path | What lives here |
@@ -66,7 +72,6 @@ Visualization: https://happening-markets-arc-hackathon.netlify.app/6
 | `backend/` | Venue engine (C# / .NET 9): indexer, order book, settlement, RFM coordinator, API |
 | `frontend/` | Trading UI (TypeScript): order book, buy/sell panel, positions, RFM flows |
 | `e2e/` | End-to-end lifecycle proof driver that runs the full flow against real Arc |
-| `agents/` | Testnet agents that act as market makers, quoting on RFM requests |
 | `docs/` | Deployment and operations notes |
 
 ## Known Limitations
