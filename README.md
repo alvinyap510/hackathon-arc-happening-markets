@@ -42,15 +42,16 @@ The infrastructure that bridges institutional hedging risk into prediction marke
 4. **Match at the deadline.** When the reveal window closes, the cheapest quotes win, in price order. If the fill clears the institution's minimum, collateral locks, positions mint, and the market is born.
 5. **Live market.** The new market opens as a public order book. The institution already has its hedge at a committed price. Everyone else provides the exit liquidity.
 
-## Repository
+## Repository Layout
 
 | Path | What lives here |
 |---|---|
-| `contracts/` | Four Solidity contracts (Foundry): Vault, CTFExchangeLite, OutcomeTokens, RFM |
+| `contracts/` | Solidity contracts (Foundry): Vault, OutcomeTokens, CTFExchangeLite, RFM |
 | `backend/` | Venue engine (C# / .NET 9): indexer, order book, settlement, RFM coordinator, API |
-| `frontend/` | Trading UI (TypeScript): order book, buy/sell panel, positions, RFM and bridge flows |
-| `agents/` | Autonomous market-maker agent (ERC-8004 identity, ERC-8183 jobs) |
-| `docs/` | Deck, demo script, diagrams |
+| `frontend/` | Trading UI (TypeScript): order book, buy/sell panel, positions, RFM flows |
+| `e2e/` | End-to-end lifecycle proof driver that runs the full flow against real Arc |
+| `agents/` | Testnet agents that act as market makers, quoting on RFM requests |
+| `docs/` | Deployment and operations notes |
 
 ## Built on Arc
 
