@@ -208,14 +208,24 @@ public sealed class NethereumChainGateway : IChainGateway
 
     public async Task<string> SubmitFinalizeAsync(BigInteger requestId, CancellationToken ct)
     {
-        var handler = _operatorWeb3.Eth.GetContractHandler(_cfg.NormalizedRfm);
-        return await handler.SendRequestAsync(new FinalizeFunction { RequestId = requestId });
+        await _settlementGate.WaitAsync(ct);
+        try
+        {
+            var handler = _operatorWeb3.Eth.GetContractHandler(_cfg.NormalizedRfm);
+            return await handler.SendRequestAsync(new FinalizeFunction { RequestId = requestId });
+        }
+        finally { _settlementGate.Release(); }
     }
 
     public async Task<string> SubmitResolveAsync(string marketId, Outcome outcome, CancellationToken ct)
     {
-        var handler = _operatorWeb3.Eth.GetContractHandler(_cfg.NormalizedOutcomeTokens);
-        return await handler.SendRequestAsync(new ResolveFunction { MarketId = Infrastructure.Hash.HexToBytes(marketId), Outcome = (byte)outcome });
+        await _settlementGate.WaitAsync(ct);
+        try
+        {
+            var handler = _operatorWeb3.Eth.GetContractHandler(_cfg.NormalizedOutcomeTokens);
+            return await handler.SendRequestAsync(new ResolveFunction { MarketId = Infrastructure.Hash.HexToBytes(marketId), Outcome = (byte)outcome });
+        }
+        finally { _settlementGate.Release(); }
     }
 
     // ----------------------------------------------------------- user ops
@@ -281,10 +291,15 @@ public sealed class NethereumChainGateway : IChainGateway
     {
         // The faucet mints the self-deployed collateral MockUSDC. mint is permissionless;
         // the OPERATOR signs so a fresh faucet'd account needs no gas to receive funds.
-        var handler = _operatorWeb3.Eth.GetContractHandler(_cfg.NormalizedUsdc);
-        var txHash = await handler.SendRequestAsync(new UsdcMintFunction { To = Domain.Addresses.Normalize(user), Amt = amt });
-        await AwaitTxMinedAsync(txHash, ct);
-        return txHash;
+        await _settlementGate.WaitAsync(ct);
+        try
+        {
+            var handler = _operatorWeb3.Eth.GetContractHandler(_cfg.NormalizedUsdc);
+            var txHash = await handler.SendRequestAsync(new UsdcMintFunction { To = Domain.Addresses.Normalize(user), Amt = amt });
+            await AwaitTxMinedAsync(txHash, ct);
+            return txHash;
+        }
+        finally { _settlementGate.Release(); }
     }
 
     public async Task<BigInteger> GetUsdcWalletBalanceAsync(string user, CancellationToken ct)
@@ -292,20 +307,39 @@ public sealed class NethereumChainGateway : IChainGateway
 
     public async Task FundGasAsync(string address, CancellationToken ct)
     {
-        var wei = "0x" + (BigInteger.Pow(10, 18) * 1).ToString("x"); // 1 ETH
-        var req = new Nethereum.JsonRpc.Client.RpcRequest(Guid.NewGuid().ToString(), "anvil_setBalance",
-            new object[] { Domain.Addresses.Normalize(address), wei });
-        await _operatorWeb3.Client.SendRequestAsync(req);
+        // Real native gas transfer (Arc 18-dec; 1e18 = 1 gas-unit ~ 1 USDC, funds ~150 txs).
+        // Submitted through the locally-signing TransactionManager: _operatorWeb3 is built
+        // from the operator Account key, so the remote node need not hold/unlock it. The
+        // Anvil-only anvil_setBalance this replaced is rejected by Arc/Alchemy. Serialized
+        // under _settlementGate with every other operator-signed send (shared nonce).
+        await _settlementGate.WaitAsync(ct);
+        try
+        {
+            var txInput = new TransactionInput
+            {
+                From = _cfg.OperatorAddress,
+                To = Domain.Addresses.Normalize(address),
+                Value = new HexBigInteger(BigInteger.Pow(10, 18)),
+            };
+            var txHash = await _operatorWeb3.Eth.TransactionManager.SendTransactionAsync(txInput);
+            await AwaitTxMinedAsync(txHash, ct);
+        }
+        finally { _settlementGate.Release(); }
     }
 
     public async Task SubmitCreateMarketAsync(string marketId, byte[] meta, CancellationToken ct)
     {
-        var handler = _operatorWeb3.Eth.GetContractHandler(_cfg.NormalizedOutcomeTokens);
-        await handler.SendRequestAsync(new CreateMarketFunction
+        await _settlementGate.WaitAsync(ct);
+        try
         {
-            MarketId = Infrastructure.Hash.HexToBytes(marketId),
-            Meta = meta,
-        });
+            var handler = _operatorWeb3.Eth.GetContractHandler(_cfg.NormalizedOutcomeTokens);
+            await handler.SendRequestAsync(new CreateMarketFunction
+            {
+                MarketId = Infrastructure.Hash.HexToBytes(marketId),
+                Meta = meta,
+            });
+        }
+        finally { _settlementGate.Release(); }
     }
 
     public async Task<TxStatus> TxStatusAsync(string txHash, CancellationToken ct)

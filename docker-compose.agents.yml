@@ -1,0 +1,44 @@
+# Additive override: the two external agent services. Apply ON TOP of the VPS
+# base compose (docker-compose.yml at /opt/venue-arc), which defines `backend` and
+# `caddy` on the `venue` network. The agents are API customers of the venue — they
+# reach it over the Docker network at http://backend:8080 (no public Caddy
+# hairpin, no CORS, no TLS). Identities are already in the backend's DemoUsers,
+# so adding these needs NO backend recreate.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.agents.yml up -d mock-quoter mock-liquidity
+#
+# Images are pre-built linux/amd64 and docker-loaded onto the VPS (see RUNBOOK §A).
+# Journals persist on named volumes so an agent restart recovers its commit/reveal
+# state (PLAN §5.4 / §6.5). Fail-closed: each refuses to start without ENABLED=true.
+services:
+  mock-quoter:
+    image: mock-quoter:arc
+    restart: unless-stopped
+    depends_on: [backend]
+    environment:
+      VENUE_API: http://backend:8080
+      AGENT_ADDRESSES: 0x806A04E96f9A5aDA3BA53b630c6232f7cD142402,0x67001f904DF5ce0957bc121016Ce51C5E71Fc782
+      ENABLED: "true"
+      POLL_MS: "2000"
+      JOURNAL_DIR: /data
+    volumes:
+      - quoter_data:/data
+    networks: [venue]
+
+  mock-liquidity:
+    image: mock-liquidity:arc
+    restart: unless-stopped
+    depends_on: [backend]
+    environment:
+      VENUE_API: http://backend:8080
+      AGENT_ADDRESSES: 0x2B3eFc21D8D8e724E9B5A9EF6fc5CA4e8c95c40D
+      ENABLED: "true"
+      POLL_MS: "2000"
+      JOURNAL_DIR: /data
+    volumes:
+      - liquidity_data:/data
+    networks: [venue]
+
+volumes:
+  quoter_data:
+  liquidity_data:
