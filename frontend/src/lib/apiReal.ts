@@ -146,7 +146,13 @@ export class RealApi implements VenueApi {
       winningOutcome: v.winningOutcome ? (v.winningOutcome.toUpperCase() as OutcomeSide) : undefined,
       bornFromRfm: v.bornFromRfm ?? v.born != null,
       birth: v.born
-        ? { marginalTick: v.born.marginalYesTick, vwapTick: v.born.vwapYesTick, filledQty: v.born.filled }
+        ? {
+            marginalTick: v.born.marginalYesTick,
+            vwapTick: v.born.vwapYesTick,
+            filledQty: v.born.filled,
+            postedTxHash: v.born.postedTxHash ?? null,
+            txHash: v.born.txHash ?? null,
+          }
         : undefined,
       midTick: v.midTick ?? null,
       lastTradeTick: null,
@@ -236,6 +242,9 @@ export class RealApi implements VenueApi {
       revealDeadline: RealApi.isoFromUnix(v.revealDeadline),
       commitCount: Number(v.commitCount ?? 0),
       bornMarketId: v.born?.marketId,
+      // from the indexed RequestPosted event, so it survives a refetch/reload
+      // (the POST response hash is only in hand for the tab that created it)
+      txHash: v.postedTxHash ?? undefined,
     };
   }
 
@@ -266,6 +275,7 @@ export class RealApi implements VenueApi {
         slashCount: slashed.length,
         slashed,
         marketId: v.born?.marketId,
+        txHash: v.born?.txHash ?? null,
       };
     }
     return { request, reveals, final, bornMarketId: v.born?.marketId ?? null };

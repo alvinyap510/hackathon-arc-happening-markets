@@ -56,6 +56,13 @@ export default function TradingView({ market, onBack }: { market: Market; onBack
               </span>
             )}
           </p>
+          {/* on-chain provenance for an RFM-born market: the request and the birth */}
+          {market.birth && (market.birth.postedTxHash || market.birth.txHash) && (
+            <div className="mt-1.5 flex items-center gap-4 text-[11px]">
+              {market.birth.postedTxHash && <TxLink hash={market.birth.postedTxHash} label="request tx" />}
+              {market.birth.txHash && <TxLink hash={market.birth.txHash} label="market born tx" />}
+            </div>
+          )}
         </div>
         {winningPos && (
           <div className="flex items-center gap-3">

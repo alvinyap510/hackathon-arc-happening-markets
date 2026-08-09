@@ -7,7 +7,7 @@ import FaucetPage from "./pages/FaucetPage";
 import { StoreProvider, useStore } from "./lib/store";
 
 function Shell() {
-  const { session } = useStore();
+  const { session, refreshMarkets } = useStore();
   const [tab, setTab] = useState<Tab>("markets");
   const [selectedMarket, setSelectedMarket] = useState<string | null>(null);
 
@@ -16,6 +16,7 @@ function Shell() {
   const openMarket = (id: string) => {
     setSelectedMarket(id);
     setTab("markets");
+    void refreshMarkets();
   };
 
   return (
@@ -23,7 +24,12 @@ function Shell() {
       tab={tab}
       onTab={(t) => {
         setTab(t);
-        if (t === "markets") setSelectedMarket(null);
+        if (t === "markets") {
+          setSelectedMarket(null);
+          // always refetch on entering the tab: a market born while the user was
+          // on another tab must appear without a page reload.
+          void refreshMarkets();
+        }
       }}
     >
       {tab === "markets" && <MarketsPage selected={selectedMarket} onSelect={setSelectedMarket} />}

@@ -5,7 +5,7 @@ import { marketCategory, marketImageSrc } from "../lib/marketImage";
 
 export function BornTag({ compact = false }: { compact?: boolean }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-gold-500/50 bg-gold-900/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-gold-300">
+    <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-gold-500/50 bg-gold-900/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-gold-300">
       <span className="h-1 w-1 rounded-full bg-gold-300" />
       {compact ? "RFM" : "born from RFM"}
     </span>

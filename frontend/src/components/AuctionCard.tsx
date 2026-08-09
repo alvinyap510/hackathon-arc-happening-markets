@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useRfm } from "../lib/store";
 import { useNow } from "../lib/useNow";
-import { formatUsdc, shortAddr, tickToPct, timeRemaining } from "../lib/format";
+import { formatUsdc, shortAddr, tickToPct, timeRemaining, txUrl } from "../lib/format";
 import PhaseStepper from "./PhaseStepper";
 import BornFlight from "./BornFlight";
 
@@ -183,6 +183,29 @@ export default function AuctionCard({
               Funded at <span className="prism-text">{tickToPct(final.vwapTick)}</span>
             </h4>
             <p className="num mt-2 text-xs text-ink-300">collateral locked on chain · the book opens at the auction marks</p>
+            {/* on-chain provenance: the claim above is checkable on the explorer */}
+            <div className="mt-3 flex items-center justify-center gap-4 text-[11px]">
+              {request.txHash && (
+                <a
+                  href={txUrl(request.txHash)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="num font-semibold text-steel-300 transition-colors hover:text-gold-300"
+                >
+                  request tx ↗
+                </a>
+              )}
+              {final.txHash && (
+                <a
+                  href={txUrl(final.txHash)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="num font-semibold text-steel-300 transition-colors hover:text-gold-300"
+                >
+                  market born tx ↗
+                </a>
+              )}
+            </div>
           </div>
           {flightDone && (
             <div className="mt-5 animate-rise">

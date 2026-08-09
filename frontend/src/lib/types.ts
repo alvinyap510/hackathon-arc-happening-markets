@@ -66,7 +66,14 @@ export interface MarketView {
   closing: boolean;
   resolved: boolean;
   winningOutcome?: string; // lowercase on the wire; normalized in toMarket
-  born?: { requestId: RequestId; marginalYesTick: number; vwapYesTick: number; filled: string };
+  born?: {
+    requestId: RequestId;
+    marginalYesTick: number;
+    vwapYesTick: number;
+    filled: string;
+    postedTxHash?: string | null;
+    txHash?: string | null;
+  };
   bornFromRfm?: boolean; // G5
   midTick?: number | null; // G5, server-computed, null if one-sided
   questionText?: string; // G1
@@ -83,8 +90,9 @@ export interface Market {
   status: MarketStatus;
   winningOutcome?: OutcomeSide;
   bornFromRfm: boolean;
-  /** Pay-as-bid birth marks on RFM-born markets (wire born.{marginalYesTick, vwapYesTick, filled}). */
-  birth?: { marginalTick: number; vwapTick: number; filledQty: string };
+  /** Pay-as-bid birth marks on RFM-born markets (wire born.{marginalYesTick, vwapYesTick, filled}).
+   *  postedTxHash/txHash are the on-chain provenance: the RFM request and the birth. */
+  birth?: { marginalTick: number; vwapTick: number; filledQty: string; postedTxHash?: string | null; txHash?: string | null };
   midTick: number | null;
   lastTradeTick: number | null;
 }
@@ -188,7 +196,8 @@ export interface RfmView {
   minQuoteSize?: string;
   commitCount?: string; // numeric string
   phase?: string; // lowercase
-  born?: { marketId: MarketId; marginalYesTick: number; vwapYesTick: number; filled?: string | null } | null;
+  postedTxHash?: string | null;
+  born?: { marketId: MarketId; marginalYesTick: number; vwapYesTick: number; filled?: string | null; txHash?: string | null } | null;
   reveals?: { mm: Address; tick: string; size: string; inRange: boolean }[];
   fills?: { mm: Address; tick: string; size: string }[]; // REST only
 }
@@ -235,6 +244,8 @@ export interface RfmFinal {
   slashCount: number;
   slashed: { mm: Address; amount: string }[];
   marketId?: MarketId;
+  /** Tx that emitted MarketBorn - the receipt for "collateral locked on chain". */
+  txHash?: string | null;
 }
 
 /** Wire: POST /v1/rfm/requests response (G6). */

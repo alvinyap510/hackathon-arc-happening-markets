@@ -27,7 +27,15 @@ export default function FaucetPage() {
   };
 
   return (
-    <div className="mx-auto max-w-2xl animate-rise">
+    <div className="animate-rise">
+      {/* flat edge-to-edge banner strip — Faucet tab only. Negative margins bleed it
+          across the main area's px-8/py-6 padding so it runs wall to wall. */}
+      <div className="-mx-8 -mt-6 mb-6 bg-gold-400 px-8 py-2 text-center text-[12px] font-semibold text-ink-950">
+        Testnet demo uses <span className="font-bold">MockUSDC</span> because we need to mint various quantity for
+        testing — production will use Arc&apos;s system USDC.
+      </div>
+
+      <div className="mx-auto max-w-2xl">
       <header className="mb-6">
         <h2 className="font-display text-3xl font-semibold text-paper-100">Faucet</h2>
         <p className="mt-1 text-sm text-ink-300">Mint demo USDC, deposit, trade.</p>
@@ -117,6 +125,7 @@ export default function FaucetPage() {
           </div>
         )}
         {error && <p className="text-xs text-no-400">{error}</p>}
+      </div>
       </div>
     </div>
   );
