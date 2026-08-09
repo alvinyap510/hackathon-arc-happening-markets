@@ -6,9 +6,23 @@ Built from the ground up on Arc.
 
 ## Deck
 
+https://happening-markets-arc-hackathon.netlify.app
+
 ## Frontend
 
+https://frontend-iota-murex-45.vercel.app
+
 ## Deployed Contracts
+
+Arc testnet · chain ID `5042002` · explorer [`testnet.arcscan.app`](https://testnet.arcscan.app)
+
+| Contract | Address | What it does |
+|---|---|---|
+| `Vault.sol` | [`0xAcfa83e4...4a82Eeed`](https://testnet.arcscan.app/address/0xAcfa83e4A9A147DfA5b6F4Bf8478192D4a82Eeed) | Custody and all physical asset movement. Holds user USDC and outcome tokens; the engine and RFM can only command it through narrow conservation-preserving primitives. Withdraw and redeem can never be frozen. |
+| `OutcomeTokens.sol` | [`0xE4E3EaBA...11Dd195C`](https://testnet.arcscan.app/address/0xE4E3EaBA1C944B8B17be1DE9f4a6BAD211Dd195C) | Binary YES/NO conditional tokens plus the collateral pool. Split and merge are Vault-only, resolution is operator-only and one-shot, redemption is permissionless. |
+| `CTFExchangeLite.sol` | [`0x353103Bd...31299b06`](https://testnet.arcscan.app/address/0x353103Bda8f72411C91DAeb2962b2ffE31299b06) | Settlement router over the Vault. Holds no funds; settles matched trades in whole-batch atomic operations where any invalid trade reverts the entire batch. |
+| `RFM.sol` | [`0x5FFf6dC4...E6867d72`](https://testnet.arcscan.app/address/0x5FFf6dC4Dc4B0e164ad86144cA3E25C0E6867d72) | The Request for Market auction. Institutions post hedge requests, market makers commit sealed bonded quotes then reveal, and the best quotes are matched at the deadline so the market is born pre-funded and pre-priced. |
+| `MockUSDC.sol` | [`0xE0685ecA...eA10b9308`](https://testnet.arcscan.app/token/0xE0685ecACd0CB011377Ecb65001995eEA10b9308) | Testnet collateral token (6-decimal ERC-20). Stands in for Arc system USDC, which is not mintable at test size. Gas is still paid in real Arc USDC. |
 
 ## What we are building
 
@@ -48,20 +62,6 @@ Arc is Circle's stablecoin-native chain, where USDC is the gas token. We use:
 - **Agent Stack (ERC-8004 / ERC-8183)** so the market-maker agent has a real on-chain identity and job record
 
 Trading and collateral are denominated in USDC end to end.
-
-## Deployed on Arc testnet
-
-Chain ID `5042002` · RPC `https://rpc.testnet.arc.io` · explorer [`testnet.arcscan.app`](https://testnet.arcscan.app). Current testnet deployment (addresses are updated on each redeploy):
-
-| Contract | Address |
-|---|---|
-| MockUSDC (collateral, 6-dec) | `0xE0685ecACd0CB011377Ecb65001995eEA10b9308` |
-| OutcomeTokens | `0xE4E3EaBA1C944B8B17be1DE9f4a6BAD211Dd195C` |
-| Vault | `0xAcfa83e4A9A147DfA5b6F4Bf8478192D4a82Eeed` |
-| CTFExchangeLite | `0x353103Bda8f72411C91DAeb2962b2ffE31299b06` |
-| RFM | `0x5FFf6dC4Dc4B0e164ad86144cA3E25C0E6867d72` |
-
-Roles are wired once at deploy and frozen (Vault, OutcomeTokens, and RFM reference each other; the operator settles and resolves). Collateral is the MockUSDC above; production points the same `USDC_ADDRESS` parameter at the Arc system USDC face `0x3600...0000` with no contract change.
 
 ## Status
 
