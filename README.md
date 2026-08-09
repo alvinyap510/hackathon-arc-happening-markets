@@ -4,6 +4,20 @@ We built a full-stack prediction market platform around a new primitive: **Reque
 
 Built from the ground up on Arc.
 
+## The Problem
+
+1. Institutions have real event risk they want to hedge. Today they use RFQ terminals, through swaps and options priced privately, desk to desk.
+
+2. Event contracts are a powerful financial instrument and the primitive is proven. But they are fueled by speculative volume, not designed for institutions.
+
+## Our Solution
+
+A Request for Market (RFM) platform that matches institutions and market makers in the form of event contracts, through a commit-and-reveal mechanism. Once matched, the market goes live and secondary speculative volume can participate in trading it.
+
+1. Demand and supply are proven, not invented.
+
+2. Speculative volume is what makes hedging cheap and liquid.
+
 ## Deck
 
 https://happening-markets-arc-hackathon.netlify.app
