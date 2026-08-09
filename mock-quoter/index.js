@@ -17,8 +17,9 @@
 //
 // See PLAN_MOCK_AGENTS.md §5.
 
-import { readdir, readFile, writeFile, rename, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, rename, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 
 const API = process.env.VENUE_API || 'http://backend:8080';
 const ADDRESSES = (process.env.AGENT_ADDRESSES || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -34,13 +35,15 @@ const ENABLED = (process.env.ENABLED || '').toLowerCase() === 'true';
 const TX_POLLS = 4;
 const TX_POLL_DELAY_MS = 1500;
 
-if (!ENABLED) { console.error('[mock-quoter] ENABLED is not true; refusing to start (fail-closed).'); process.exit(1); }
-if (ADDRESSES.length < 2) { console.error('[mock-quoter] AGENT_ADDRESSES must list >=2 identities'); process.exit(1); }
+if (!ENABLED && import.meta.url === pathToFileURL(process.argv[1] || '').href) { console.error('[mock-quoter] ENABLED is not true; refusing to start (fail-closed).'); process.exit(1); }
+if (ADDRESSES.length < 2 && import.meta.url === pathToFileURL(process.argv[1] || '').href) { console.error('[mock-quoter] AGENT_ADDRESSES must list >=2 identities'); process.exit(1); }
 
 // Sort identities by address (lowercase) so tick/size assignment is deterministic
 // across restarts. agent[0] -> (tickA, sizeA), agent[1] -> (tickB, sizeB).
 const IDENTITIES = ADDRESSES.map(a => a.toLowerCase()).sort();
 const tokens = {};                       // address -> Bearer token
+
+export { quoteFor, counterLeg, outstandingLiabilities, hasOtherActiveAuction, journal };
 
 // --------------------------------------------------------------- journal
 let journal = [];
@@ -70,7 +73,7 @@ let backendDown = false;
 async function api(method, path, token, body) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch(`${API}${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const res = await fetch(`${API}${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(8000) });
   if (res.status === 401 && token) return { status: 401 };   // caller rebinds
   const text = await res.text();
   let json = null; try { json = text ? JSON.parse(text) : null; } catch {}
@@ -132,16 +135,25 @@ async function availableFor(address) {
   return BigInt(r.json.available || '0');
 }
 
-function outstandingLiabilities(agent) {
-  // counter-legs for commits that reached submitted/confirmed but reveal not confirmed
+function outstandingLiabilities(agent, excludeRequestId) {
+  // Counter-legs for OTHER non-terminal auctions of this identity. The current row's
+  // own counter-leg is added separately in the preflight, so it MUST be excluded here
+  // (double-counting it stranded the second reveal at the 1000-USDC floor — HCR2-2).
+  // Count intent/submitted/confirmed (intent may land; expired still holds a bond
+  // until finalize) — every non-terminal liability, not only submitted/confirmed.
   let total = 0n;
   for (const r of journal) {
     if (r.agent !== agent || r.terminal) continue;
-    if ((r.commit.state === 'submitted' || r.commit.state === 'confirmed') && r.reveal.state !== 'confirmed' && !r.expired) {
-      total += counterLeg(BigInt(r.size), r.tick);
-    }
+    if (r.requestId === excludeRequestId) continue;
+    if (r.commit.state === 'confirmed' && r.reveal.state === 'confirmed') continue;
+    total += counterLeg(BigInt(r.size), r.tick);
   }
   return total;
+}
+// One-active-auction gate (PLAN §5.5): an identity may not open a new commit while
+// it has another non-terminal auction. Prevents spreading thin / stranding bonds.
+function hasOtherActiveAuction(agent, requestId) {
+  return journal.some(r => r.agent === agent && !r.terminal && r.requestId !== requestId);
 }
 
 async function handleRequest(request) {
@@ -159,14 +171,18 @@ async function handleRequest(request) {
     if (!q) { console.log(`[mock-quoter] req ${requestId} ${agent}: outside supported domain, skip`); continue; }
     const ctx = { tick: q.tick, size: q.size.toString(),
                   commitDeadline: Number(request.commitDeadline), revealDeadline: Number(request.revealDeadline) };
-    const row = ensureRow(requestId, agent, ctx);
+    // One-active-auction gate: do not OPEN a new commit for an identity that already
+    // has another non-terminal auction (PLAN §5.5). Resuming an existing row is allowed.
+    let row = rowFor(requestId, agent);
+    if (!row && hasOtherActiveAuction(agent, requestId)) { console.log(`[mock-quoter] req ${requestId} ${agent}: another auction active, skip`); continue; }
+    row = ensureRow(requestId, agent, ctx);
     if (row.terminal) continue;
     const revealedHere = (request.reveals || []).some(rv => String(rv.mm).toLowerCase() === agent);
     if (row.reveal.state === 'confirmed' || revealedHere) { row.reveal.state = 'confirmed'; continue; }
 
     // COMMIT window
     if (now <= ctx.commitDeadline && row.commit.state !== 'confirmed') {
-      const need = RFM_BOND + counterLeg(q.size, q.tick) + outstandingLiabilities(agent);
+      const need = RFM_BOND + counterLeg(q.size, q.tick) + outstandingLiabilities(agent, requestId);
       const avail = await availableFor(agent);
       if (avail == null) { console.log(`[mock-quoter] req ${requestId} ${agent}: balance read failed`); continue; }
       if (avail < need) { console.log(`[mock-quoter] req ${requestId} ${agent}: insufficient available ${avail} < ${need}, skip`); continue; }
@@ -188,10 +204,11 @@ async function handleRequest(request) {
       continue;
     }
 
-    // REVEAL window: attempt for every commit intent|submitted|confirmed (not only confirmed)
+    // REVEAL window: attempt for every commit intent|submitted|confirmed (not only confirmed).
+    // Preflight excludes the current row from outstanding (its counter-leg is counted directly).
     if (now > ctx.commitDeadline && now <= ctx.revealDeadline &&
         (row.commit.state === 'intent' || row.commit.state === 'submitted' || row.commit.state === 'confirmed')) {
-      const need = counterLeg(q.size, q.tick) + outstandingLiabilities(agent);
+      const need = counterLeg(q.size, q.tick) + outstandingLiabilities(agent, requestId);
       const avail = await availableFor(agent);
       if (avail != null && avail < need) { console.log(`[mock-quoter] req ${requestId} ${agent}: insufficient for reveal, skip`); continue; }
       row.reveal.state = 'intent'; await saveJournal();
@@ -224,22 +241,24 @@ async function handleRequest(request) {
 // --------------------------------------------------------------- loop
 async function tick() {
   try {
+    let seen = new Set();
     const r = await api('GET', '/v1/rfm/requests', null, null);
-    if (r.status !== 200 || !Array.isArray(r.json)) { if (!backendDown) { backendDown = true; console.log(`[mock-quoter] GET /v1/rfm/requests -> ${r.status}`); } return; }
-    if (backendDown) { backendDown = false; console.log('[mock-quoter] backend reachable again'); }
-    for (const req of r.json) { await handleRequest(req); }
-    // Also drive any journal rows whose stored deadlines demand action even if the
-    // request is momentarily absent from the GET (torn/missing GET, backend restart).
-    const seen = new Set(r.json.map(x => x.requestId));
+    if (r.status === 200 && Array.isArray(r.json)) {
+      if (backendDown) { backendDown = false; console.log('[mock-quoter] backend reachable again'); }
+      for (const req of r.json) await handleRequest(req);
+      seen = new Set(r.json.map(x => x.requestId));
+    } else {
+      if (!backendDown) { backendDown = true; console.log(`[mock-quoter] GET /v1/rfm/requests -> ${r.status}; driving journal rows from stored deadlines`); }
+      // collection GET failed — do NOT return; fall through to drive journal rows.
+    }
+    // Drive journal rows not seen in the collection from their stored deadlines
+    // (PLAN §5.3). A torn/missing GET is a RETRY, never a terminal decision (HCR2-3):
+    // only an observed terminal phase (via handleRequest) marks a row terminal.
     for (const row of journal) {
       if (row.terminal || seen.has(row.requestId)) continue;
-      const now = Math.floor(Date.now() / 1000);
-      if (now <= row.commitDeadline || now <= row.revealDeadline) {
-        // Re-fetch the single request to drive it; if 404, it is gone (terminal-ish).
-        const rr = await call(row.agent, 'GET', `/v1/rfm/requests/${row.requestId}`, null);
-        if (rr.status === 200 && rr.json) await handleRequest(rr.json);
-        else { row.terminal = true; await saveJournal(); }
-      }
+      const rr = await api('GET', `/v1/rfm/requests/${row.requestId}`, null, null);
+      if (rr.status === 200 && rr.json) await handleRequest(rr.json);
+      // else: retry next tick — do NOT mark terminal.
     }
     await saveJournal();
   } catch (e) { console.error('[mock-quoter] loop error', e.message); }
@@ -254,4 +273,6 @@ async function main() {
   for (const a of IDENTITIES) { if (!(await rebind(a))) console.error(`[mock-quoter] bind failed for ${a}`); }
   for (;;) { await tick(); await sleep(POLL_MS); }
 }
-main().catch(e => { console.error('[mock-quoter] fatal', e); process.exit(1); });
+if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+  main().catch(e => { console.error('[mock-quoter] fatal', e); process.exit(1); });
+}

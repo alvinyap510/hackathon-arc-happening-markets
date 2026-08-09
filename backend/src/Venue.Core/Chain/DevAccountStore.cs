@@ -18,6 +18,7 @@ public sealed class DevAccountStore : ISessionProvisioner
     private readonly string _secret;
     private readonly ConcurrentDictionary<string, string> _byRef = new();
     private readonly ConcurrentDictionary<string, string> _byAddress = new();
+    private readonly SemaphoreSlim _provisionGate = new(1, 1);
     private IChainGateway? _gateway;
 
     public DevAccountStore(string secret)
@@ -35,18 +36,28 @@ public sealed class DevAccountStore : ISessionProvisioner
     public async Task<string> ProvisionAsync(string ref_, CancellationToken ct)
     {
         var refKey = ref_ ?? "";
-        if (_byRef.TryGetValue(refKey, out var key))
-            return AddressFromKey(key);
-
-        key = DeriveKey(refKey);
-        var address = AddressFromKey(key);
-        _byRef[refKey] = key;
-        _byAddress[address] = key;
-        if (_gateway != null)
+        // Serialize provisioning (demo scale: logins are rare). This (a) prevents two
+        // concurrent same-ref callers each sending a non-idempotent 1e18 gas transfer,
+        // and (b) lets the second caller observe the first's cached success without
+        // re-funding. Funding is awaited BEFORE the cache entry is published, so a
+        // failed first transfer leaves NO cache entry and the next login retries.
+        await _provisionGate.WaitAsync(ct);
+        try
         {
-            await _gateway.FundGasAsync(address, ct);
+            if (_byRef.TryGetValue(refKey, out var key))
+                return AddressFromKey(key);
+
+            key = DeriveKey(refKey);
+            var address = AddressFromKey(key);
+            if (_gateway != null)
+            {
+                await _gateway.FundGasAsync(address, ct);
+            }
+            _byRef[refKey] = key;
+            _byAddress[address] = key;
+            return address;
         }
-        return address;
+        finally { _provisionGate.Release(); }
     }
 
     public string? KeyForAddress(string address)

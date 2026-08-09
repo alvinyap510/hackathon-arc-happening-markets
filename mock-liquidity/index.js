@@ -18,9 +18,10 @@
 
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 
 const API = process.env.VENUE_API || 'http://backend:8080';
-const ADDRESSES = (process.env.AGENT_ADDRESSES || '').split(',').map(s => s.trim().filter(Boolean)).filter(Boolean);
+const ADDRESSES = (process.env.AGENT_ADDRESSES || '').split(',').map(s => s.trim()).filter(Boolean);
 const POLL_MS = parseInt(process.env.POLL_MS || '2000', 10);
 const JOURNAL_DIR = process.env.JOURNAL_DIR || '/data';
 const JOURNAL_PATH = `${JOURNAL_DIR}/liquidity-journal.json`;
@@ -28,10 +29,12 @@ const RUNG_SIZE = 200_000_000n;          // 200 outcome-shares (6-dec); LegCost 
 const SPREAD = 10;                       // ±10 ticks around the born marginal
 const ENABLED = (process.env.ENABLED || '').toLowerCase() === 'true';
 
-if (!ENABLED) { console.error('[mock-liquidity] ENABLED is not true; refusing to start (fail-closed).'); process.exit(1); }
-if (ADDRESSES.length < 1) { console.error('[mock-liquidity] AGENT_ADDRESSES must list >=1 identity'); process.exit(1); }
-const AGENT = ADDRESSES[0].toLowerCase();
+if (!ENABLED && import.meta.url === pathToFileURL(process.argv[1] || '').href) { console.error('[mock-liquidity] ENABLED is not true; refusing to start (fail-closed).'); process.exit(1); }
+if (ADDRESSES.length < 1 && import.meta.url === pathToFileURL(process.argv[1] || '').href) { console.error('[mock-liquidity] AGENT_ADDRESSES must list >=1 identity'); process.exit(1); }
+const AGENT = (ADDRESSES[0] || '').toLowerCase();
 let token = null;
+
+export { rungs, legCost, wouldCross };
 
 // --------------------------------------------------------------- journal
 let journal = [];     // { marketId, bid: {placed, orderId}, ask: {placed, orderId} }
@@ -48,7 +51,7 @@ function rowFor(marketId) { let r = journal.find(x => x.marketId === marketId); 
 async function api(method, path, tkn, body) {
   const headers = { 'Content-Type': 'application/json' };
   if (tkn) headers['Authorization'] = `Bearer ${tkn}`;
-  const res = await fetch(`${API}${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const res = await fetch(`${API}${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(8000) });
   if (res.status === 401 && tkn) return { status: 401 };
   const text = await res.text();
   let json = null; try { json = text ? JSON.parse(text) : null; } catch {}
@@ -67,7 +70,8 @@ async function call(method, path, body) {
 }
 
 async function available() { const r = await call('GET', '/v1/balances'); return r.status === 200 && r.json ? BigInt(r.json.available || '0') : null; }
-async function bookOf(marketId) { const r = await api('GET', `/v1/book/${marketId}`, null, null); return r.status === 200 ? r.json : null; }
+async function bookOf(marketId) { const r = await api('GET', `/v1/book/${marketId}`, null, null); return r.status === 200 ? r.json : null; }   // null => caller treats as "no snapshot" (skip), NOT empty
+async function myRestingOrders() { const r = await call('GET', '/v1/orders?status=resting'); return r.status === 200 && Array.isArray(r.json) ? r.json : []; }
 
 // --------------------------------------------------------------- ladder (PLAN §6.3)
 // One bid + one ask anchored on the born marginal (mid). yes_bid + no_price = 980 < 1000 (no self-cross).
@@ -90,7 +94,10 @@ function legCost(price) { return (RUNG_SIZE * BigInt(price)) / 1000n; }
 // Check a rung would NOT cross the observed YES book. Bid (BUY YES @ p) crosses a resting ask <= p.
 // Ask-from-BUY-NO (BUY NO @ u, ask @ 1000-u) crosses a resting bid >= 1000-u.
 function wouldCross(book, rung, mid) {
-  if (!book || !book.yes) return false;
+  // Fail CLOSED: a missing/malformed book is NOT an empty book. Treat it as crossing
+  // (don't place) rather than non-crossing (place anyway). The caller also skips on
+  // null before this, but this keeps the helper fail-closed if ever called directly.
+  if (!book || !book.yes) return true;
   if (rung.outcome === 'yes') {                       // bid @ bidPrice
     const askMin = Math.min(...(book.yes.asks || []).map(l => l.price), Number.POSITIVE_INFINITY);
     return askMin <= rung.price;
@@ -106,17 +113,22 @@ async function placeRung(marketId, rung, mid, label) {
   const avail = await available();
   if (avail == null) { console.log(`[mock-liquidity] ${marketId} ${label}: balance read failed`); return false; }
   if (avail < legCost(rung.price)) { console.log(`[mock-liquidity] ${marketId} ${label}: insufficient available ${avail} < ${legCost(rung.price)}`); return false; }
-  // preflight: not crossing observed book
+  // preflight: not crossing observed book. A non-200/missing book is NOT an empty
+  // book — submitting without a snapshot would fail open. Skip and retry next tick.
   const book = await bookOf(marketId);
+  if (book == null) { console.log(`[mock-liquidity] ${marketId} ${label}: no book snapshot, skip`); return false; }
   if (wouldCross(book, rung, mid)) { console.log(`[mock-liquidity] ${marketId} ${label}: would cross observed book, skip`); return false; }
   // submit (idempotent clientOrderId)
   const clientOrderId = `liq-${marketId.slice(0, 10)}-${label}`;
   const r = await call('POST', '/v1/orders', { MarketId: marketId, Outcome: rung.outcome, Side: rung.side, Size: RUNG_SIZE.toString(), Price: rung.price, Type: 'limit', ClientOrderId: clientOrderId });
   if (r.status !== 200 || !r.json) { console.log(`[mock-liquidity] ${marketId} ${label}: POST status=${r.status}`); return false; }
-  // CHECKED POSTCONDITION: zero fills, resting, full remaining
+  // CHECKED POSTCONDITION: zero fills, resting, full remaining. A duplicate
+  // clientOrderId returns status="rejected" (engine dedup) — treat as already-placed,
+  // NOT as a crossing.
   const fills = r.json.fills || [];
   const status = r.json.status;
   const remaining = BigInt(r.json.remaining || '0');
+  if (status === 'rejected') { console.log(`[mock-liquidity] ${marketId} ${label}: duplicate clientOrderId -> already placed`); return 'dup'; }
   if (fills.length > 0 || status !== 'resting' || remaining !== RUNG_SIZE) {
     console.log(`[mock-liquidity] ${marketId} ${label}: PLACEMENT CROSSED (fills=${fills.length} status=${status} remaining=${remaining}) — stopping rungs for this market`);
     return 'crossed';
@@ -125,22 +137,38 @@ async function placeRung(marketId, rung, mid, label) {
   return r.json.orderId;
 }
 
+// Reconcile against the backend's view of OUR resting orders before deciding what
+// is missing — so a crash after POST but before journal save does not double-place
+// (PLAN §6.5). Match by (marketId, outcome, side, price).
+async function reconcileRow(row, marketId, rungs) {
+  const orders = await myRestingOrders();
+  for (const o of orders) {
+    if (o.marketId !== marketId) continue;
+    if (!row.bid.placed && o.outcome === rungs.bid.outcome && o.side === 'buy' && Number(o.price) === rungs.bid.price) { row.bid.placed = true; row.bid.orderId = o.orderId; }
+    if (!row.ask.placed && o.outcome === rungs.ask.outcome && o.side === 'buy' && Number(o.price) === rungs.ask.price) { row.ask.placed = true; row.ask.orderId = o.orderId; }
+  }
+  await saveJournal();
+}
+
 async function handleMarket(market) {
   if (!market.bornFromRfm || !market.exists || market.closing || market.resolved) return;
   if (!market.born || market.born.marginalYesTick == null) return;
   const mid = Number(market.born.marginalYesTick);
-  const rungs = rungs(mid);
-  if (!rungs) { console.log(`[mock-liquidity] ${market.marketId}: mid=${mid} out of ladder range, skip`); return; }
+  const ladder = rungs(mid);
+  if (!ladder) { console.log(`[mock-liquidity] ${market.marketId}: mid=${mid} out of ladder range, skip`); return; }
   const row = rowFor(market.marketId);
+  if (!row.bid.placed || !row.ask.placed) await reconcileRow(row, market.marketId, ladder);
   if (!row.bid.placed) {
-    const res = await placeRung(market.marketId, rungs.bid, mid, 'bid');
+    const res = await placeRung(market.marketId, ladder.bid, mid, 'bid');
     if (res === 'crossed') { row.bid.placed = true; row.ask.placed = true; await saveJournal(); return; }
-    if (res) { row.bid.placed = true; row.bid.orderId = res; await saveJournal(); }
+    if (res && res !== 'dup') { row.bid.placed = true; row.bid.orderId = res; await saveJournal(); }
+    else if (res === 'dup') { row.bid.placed = true; await saveJournal(); }
   }
   if (!row.ask.placed) {
-    const res = await placeRung(market.marketId, rungs.ask, mid, 'ask');
+    const res = await placeRung(market.marketId, ladder.ask, mid, 'ask');
     if (res === 'crossed') { row.ask.placed = true; await saveJournal(); return; }
-    if (res) { row.ask.placed = true; row.ask.orderId = res; await saveJournal(); }
+    if (res && res !== 'dup') { row.ask.placed = true; row.ask.orderId = res; await saveJournal(); }
+    else if (res === 'dup') { row.ask.placed = true; await saveJournal(); }
   }
 }
 
@@ -162,4 +190,6 @@ async function main() {
   for (;;) { await tick(); await sleep(POLL_MS); }
 }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-main().catch(e => { console.error('[mock-liquidity] fatal', e); process.exit(1); });
+if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+  main().catch(e => { console.error('[mock-liquidity] fatal', e); process.exit(1); });
+}

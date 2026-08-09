@@ -5,6 +5,6 @@
   "description": "External resting-liquidity agent — posts one non-crossing bid+ask ladder on each born RFM market over the venue REST API. No private keys; the venue signs on the agent's behalf.",
   "type": "module",
   "main": "index.js",
-  "scripts": { "start": "node index.js" },
+  "scripts": { "start": "node index.js", "test": "node --test" },
   "engines": { "node": ">=20" }
 }

@@ -5,6 +5,6 @@
   "description": "External RFM quoter agent — answers Request-for-Market auctions with sealed bonded quotes over the venue REST API. No private keys; the venue signs on the agent's behalf.",
   "type": "module",
   "main": "index.js",
-  "scripts": { "start": "node index.js" },
+  "scripts": { "start": "node index.js", "test": "node --test" },
   "engines": { "node": ">=20" }
 }
