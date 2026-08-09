@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useStore } from "../lib/store";
-import { formatUsdc, shortAddr } from "../lib/format";
+import { formatUsdc, shortAddr, addressUrl } from "../lib/format";
 
 export type Tab = "markets" | "rfm" | "faucet";
 
@@ -70,7 +70,20 @@ export default function Layout({
         <div className="mt-auto space-y-3">
           <div className="panel-inset p-3">
             <div className="label-caps">Wallet</div>
-            <div className="num mt-1 text-xs text-paper-200">{session ? shortAddr(session.address) : "—"}</div>
+            {session ? (
+              <a
+                href={addressUrl(session.address)}
+                target="_blank"
+                rel="noreferrer"
+                title={`${session.address} · view on Arcscan`}
+                className="num mt-1 inline-flex items-center gap-1 text-xs text-paper-200 transition-colors hover:text-gold-300"
+              >
+                {shortAddr(session.address)}
+                <span className="text-[9px] text-ink-400 group-hover:text-gold-300">↗</span>
+              </a>
+            ) : (
+              <div className="num mt-1 text-xs text-paper-200">—</div>
+            )}
             <div className="mt-2 space-y-1 text-[11px]">
               <div className="flex justify-between text-ink-300">
                 <span>Venue available</span>

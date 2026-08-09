@@ -72,3 +72,7 @@ export const ARC_EXPLORER = "https://testnet.arcscan.app";
 export function txUrl(hash: string): string {
   return `${ARC_EXPLORER}/tx/${hash}`;
 }
+
+export function addressUrl(addr: string): string {
+  return `${ARC_EXPLORER}/address/${addr}`;
+}
