@@ -173,20 +173,25 @@ public static class TradingEndpoints
         return g;
     }
 
-    /// <summary>G5/G1 market summary: bornFromRfm + server-computed midTick (mid of best
-    /// YES bid/ask, null when one-sided) + restart-durable question metadata by marketHash.</summary>
+    /// <summary>G5/G1 market summary: bornFromRfm + server-computed midTick (mid of the
+    /// canonical YES-basis touch, null when one-sided) + restart-durable question metadata by
+    /// marketHash. The touch spans BOTH sides of the projection: a YES ask is either a resting
+    /// SELL YES (YesAsks) or a resting BUY NO at the complement (NoBids); a YES bid is either a
+    /// resting BUY YES (YesBids) or a resting SELL NO at the complement (NoAsks). An inventory-
+    /// free maker posts its ask via BUY NO, so folding NoBids in is required or midTick would be
+    /// null despite real two-sided depth.</summary>
     private static async Task<object> MarketViewAsync(VenueCore core, MarketMetadataStore metadata, Market m)
     {
         long? midTick = null;
         try
         {
             var book = await core.GetBookAsync(m.MarketId);
-            if (book.YesBids.Count > 0 && book.YesAsks.Count > 0)
-            {
-                var bestBid = book.YesBids.Max(l => l.Price);
-                var bestAsk = book.YesAsks.Min(l => l.Price);
-                midTick = (bestBid + bestAsk) / 2;
-            }
+            long? bestBid = book.YesBids.Select(l => (long?)l.Price)
+                .Concat(book.NoAsks.Select(l => (long?)Prices.Complement(l.Price))).Max();
+            long? bestAsk = book.YesAsks.Select(l => (long?)l.Price)
+                .Concat(book.NoBids.Select(l => (long?)Prices.Complement(l.Price))).Min();
+            if (bestBid.HasValue && bestAsk.HasValue)
+                midTick = (bestBid.Value + bestAsk.Value) / 2;
         }
         catch (KeyNotFoundException) { /* market not born yet: one-sided/null mid */ }
 
