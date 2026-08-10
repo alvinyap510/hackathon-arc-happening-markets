@@ -3,6 +3,7 @@ import { useStore } from "../lib/store";
 import type { Book, BookLevel, Market, OrderType, OutcomeSide } from "../lib/types";
 import { foldBook, touchPrice, sweepLevels } from "../lib/bookFold";
 import { formatUsdc, parseUsdc, tickToPct } from "../lib/format";
+import SellShares from "./SellShares";
 
 /** Worst-case cost of sweeping `levels` for `size` units (buys: max cost; sells: min proceeds). */
 function sweep(levels: BookLevel[], size: string): { cost: bigint; filled: bigint } {
@@ -18,8 +19,6 @@ function sweep(levels: BookLevel[], size: string): { cost: bigint; filled: bigin
   return { cost, filled: BigInt(size) - remaining };
 }
 
-const CHIPS = [25, 50, 75] as const;
-
 /** Polymarket-fold ticket: Buy | Sell tabs x YES/NO outcome buttons with live touch
  *  prices from the ONE consolidated book. Sell operates only on held tokens
  *  (available = amount - reserved; the venue stays the reservation authority). */
@@ -32,12 +31,16 @@ export default function OrderTicket({ market, book }: { market: Market; book: Bo
   const [size, setSize] = useState("100");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
   const fold = useMemo(() => (book ? foldBook(book) : null), [book]);
   const touch = (s: "BUY" | "SELL", o: OutcomeSide) => (fold ? touchPrice(fold, s, o) : null);
 
-  // Sell tab: the user's position in the SELECTED outcome, reserved-aware.
-  const position = (balances?.positions ?? []).find((p) => p.marketId === market.marketId && p.outcome === outcome);
+  // Sell tab: the user's position in the SELECTED outcome, reserved-aware. The Sell
+  // TAB is reachable only with a gross holding in EITHER outcome (fresh accounts see
+  // it disabled); a held-but-fully-reserved position still reaches the tab, where the
+  // zero-available state blocks submit.
+  const positions = (balances?.positions ?? []).filter((p) => p.marketId === market.marketId);
+  const hasHolding = positions.some((p) => BigInt(p.size) > 0n);
+  const position = positions.find((p) => p.outcome === outcome);
   const held = BigInt(position?.size ?? "0");
   const reserved = BigInt(position?.reserved ?? "0");
   const available = held > reserved ? held - reserved : 0n;
@@ -62,9 +65,6 @@ export default function OrderTicket({ market, book }: { market: Market; book: Bo
 
   const sellBlocked = tab === "SELL" && available <= 0n;
 
-  const setChip = (p: number) => setSize(formatUsdc(((available * BigInt(p)) / 100n).toString()));
-  const setMax = () => setSize(formatUsdc(available.toString()));
-
   const place = async () => {
     setError(null);
     if (sizeBase === null || BigInt(sizeBase) <= 0n) return setError("Enter a size.");
@@ -85,13 +85,15 @@ export default function OrderTicket({ market, book }: { market: Market; book: Bo
 
   return (
     <div className="panel p-4">
-      {/* Buy | Sell tabs */}
+      {/* Buy | Sell tabs — Sell is reachable only with a gross holding in this market */}
       <div className="flex items-baseline gap-4 border-b border-ink-700/70 pb-2">
         {(["BUY", "SELL"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`text-sm font-semibold transition-colors ${
+            disabled={t === "SELL" && !hasHolding}
+            title={t === "SELL" && !hasHolding ? "No shares in this market" : undefined}
+            className={`text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
               tab === t ? "text-paper-100 underline decoration-gold-400 decoration-2 underline-offset-8" : "text-ink-400 hover:text-paper-200"
             }`}
           >
@@ -138,37 +140,8 @@ export default function OrderTicket({ market, book }: { market: Market; book: Bo
         ))}
       </div>
 
-      {/* Sell tab: reserved-aware shares + chips */}
-      {tab === "SELL" && (
-        <div className="mt-3 flex items-center justify-between text-xs">
-          <span className="text-ink-400">
-            Shares <span className="num text-paper-200">{formatUsdc(available.toString())}</span>
-            {reserved > 0n && <span className="num text-ink-500"> ({formatUsdc(reserved.toString())} reserved)</span>}
-          </span>
-          <span className="flex gap-1">
-            {CHIPS.map((p) => {
-              const chip = (available * BigInt(p)) / 100n;
-              return (
-                <button
-                  key={p}
-                  onClick={() => setChip(p)}
-                  disabled={chip <= 0n}
-                  className="rounded bg-ink-900 px-1.5 py-0.5 text-[10px] font-semibold text-ink-300 hover:text-paper-200 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {p}%
-                </button>
-              );
-            })}
-            <button
-              onClick={setMax}
-              disabled={available <= 0n}
-              className="rounded bg-ink-900 px-1.5 py-0.5 text-[10px] font-semibold text-ink-300 hover:text-paper-200 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Max
-            </button>
-          </span>
-        </div>
-      )}
+      {/* Sell tab: reserved-aware shares + lossless chips */}
+      {tab === "SELL" && <SellShares available={available} reserved={reserved} onSize={setSize} />}
 
       <div className="mt-3 grid grid-cols-2 gap-2">
         <div>

@@ -13,6 +13,16 @@ export function formatUsdc(base: string, maxFrac = 2): string {
   return `${neg ? "-" : ""}${grouped}${frac ? `.${frac.padEnd(Math.min(frac.length, maxFrac), "0")}` : ""}`;
 }
 
+/** 6-dec base units -> an INPUT-safe human string: ungrouped, up to 6 decimals,
+ *  lossless round trip — parseUsdc(formatUsdcInput(x)) === x for every x >= 0.
+ *  (formatUsdc is display-only: it groups thousands and truncates decimals.) */
+export function formatUsdcInput(base: string): string {
+  const padded = base.padStart(USDC_DECIMALS + 1, "0");
+  const whole = padded.slice(0, -USDC_DECIMALS) || "0";
+  const frac = padded.slice(-USDC_DECIMALS).replace(/0+$/, "");
+  return `${BigInt(whole).toString()}${frac ? `.${frac}` : ""}`;
+}
+
 /** Human USDC -> 6-dec base units string. Returns null on invalid input. */
 export function parseUsdc(input: string): string | null {
   const m = input.trim().match(/^(\d+)(?:\.(\d{1,6}))?$/);
