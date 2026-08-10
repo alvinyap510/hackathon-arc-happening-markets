@@ -1,4 +1,4 @@
-import { formatUsdc, formatUsdcInput } from "../lib/format";
+import { formatUsdcInput } from "../lib/format";
 
 const CHIPS = [25, 50, 75] as const;
 
@@ -19,8 +19,8 @@ export default function SellShares({
   return (
     <div className="mt-3 flex items-center justify-between text-xs">
       <span className="text-ink-400">
-        Shares <span className="num text-paper-200">{formatUsdc(available.toString())}</span>
-        {reserved > 0n && <span className="num text-ink-500"> ({formatUsdc(reserved.toString())} reserved)</span>}
+        Shares <span className="num text-paper-200">{formatUsdcInput(available.toString())}</span>
+        {reserved > 0n && <span className="num text-ink-500"> ({formatUsdcInput(reserved.toString())} reserved)</span>}
       </span>
       <span className="flex gap-1">
         {CHIPS.map((p) => (

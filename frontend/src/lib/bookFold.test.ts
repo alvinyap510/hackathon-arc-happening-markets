@@ -48,10 +48,18 @@ describe("foldBook (plan fixture)", () => {
     expect(f.mid).toBeNull();
   });
 
-  it("one-sided book: null mid, present side kept", () => {
+  it("one-sided book (bids only): null mid, present side kept", () => {
     const oneSided: Book = { ...empty, yes: { bids: [{ price: 400, size: "1" }], asks: [] } };
     const f = foldBook(oneSided);
     expect(f.bids.length).toBe(1);
+    expect(f.mid).toBeNull();
+  });
+
+  it("one-sided book (asks only, via a BUY NO): null mid, ask present, bid empty", () => {
+    const asksOnly: Book = { ...empty, no: { bids: [{ price: 480, size: "1" }], asks: [] } };
+    const f = foldBook(asksOnly);
+    expect(f.bids).toEqual([]);
+    expect(f.asks).toEqual([{ price: 520, size: "1" }]);
     expect(f.mid).toBeNull();
   });
 });
