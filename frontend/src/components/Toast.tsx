@@ -19,6 +19,7 @@ export default function Toast({ toast, onDismiss }: { toast: ToastData | null; o
       <div className="panel flex items-center gap-3 border-yes-500/40 px-4 py-3 shadow-xl shadow-black/50">
         <span className="h-2 w-2 shrink-0 rounded-full bg-yes-400" />
         <span className="text-sm text-paper-100">{toast.message}</span>
+        {toast.href && <span aria-hidden className="text-ink-500">·</span>}
         {toast.href && (
           <a
             href={toast.href}

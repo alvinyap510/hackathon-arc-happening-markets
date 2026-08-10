@@ -81,5 +81,6 @@ export function useSettlementToast(api: VenueApi, marketId: string) {
     };
   }, [api, marketId, cleanup, tryMatch]);
 
-  return { toast, dismiss: () => setToast(null), arm };
+  const dismiss = useCallback(() => setToast(null), []);
+  return { toast, dismiss, arm };
 }

@@ -389,6 +389,7 @@ public class SettlementTests
         try { await run; } catch (OperationCanceledException) { /* expected */ }
 
         Assert.Single(coordinator.Confirmed);
+        Assert.Equal("0x1", coordinator.Confirmed[0].TxHash); // timeout-reconcile route preserves the submitted hash
         Assert.Empty(coordinator.CancelledAll); // never treated as cancelled
         Assert.Empty(coordinator.Repaired);
     }

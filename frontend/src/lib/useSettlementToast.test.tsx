@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { useSettlementToast } from "./useSettlementToast";
+import Toast from "../components/Toast";
 import type { VenueApi } from "./api";
 import type { WsEvent } from "./types";
 
@@ -38,7 +39,13 @@ let hookRef: { current: ReturnType<typeof useSettlementToast> | null };
 function Probe({ api }: { api: VenueApi }) {
   const h = useSettlementToast(api, "m");
   hookRef.current = h;
-  return h.toast ? <div data-testid="toast">{h.toast.message}|{h.toast.href}</div> : null;
+  // render the REAL Toast component (it owns the 8s auto-dismiss timer) plus a probe div
+  return (
+    <>
+      {h.toast && <div data-testid="toast">{h.toast.message}|{h.toast.href}</div>}
+      <Toast toast={h.toast} onDismiss={h.dismiss} />
+    </>
+  );
 }
 
 function mount(api: VenueApi) {
@@ -153,5 +160,23 @@ describe("useSettlementToast lifecycle", () => {
     act(() => root.unmount());
     expect(f.unsubs()).toBe(1);
     root = createRoot(host); // afterEach unmounts again safely
+  });
+});
+
+describe("dismiss stability (round-1 code CR)", () => {
+  it("parent rerenders do not postpone the 8s auto-dismiss (stable dismiss identity)", () => {
+    const f = makeFakeApi();
+    mount(f.api);
+    let h!: Handlers;
+    act(() => { h = hookRef.current!.arm(); });
+    act(() => h.placed(["t1"]));
+    f.push(frame());
+    expect(host.textContent).toContain("A fill settled on-chain");
+    // nine 1-second rerenders; a timer keyed on an unstable onDismiss would restart each time
+    for (let i = 0; i < 9; i++) {
+      act(() => root.render(<Probe api={f.api} />));
+      act(() => vi.advanceTimersByTime(1000));
+    }
+    expect(host.querySelector('[data-testid="toast"]')).toBeNull(); // dismissed at ~8s
   });
 });

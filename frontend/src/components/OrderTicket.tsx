@@ -61,12 +61,22 @@ export default function OrderTicket({ market, book }: { market: Market; book: Bo
     setBusy(true);
     const watcher = settle.arm(); // BEFORE the POST: a fast settlement frame must not be missed
     try {
-      const res = await api.placeOrder({ marketId: market.marketId, outcome, side: tab, price: effTick, size: sizeBase, type });
+      let res;
+      try {
+        res = await api.placeOrder({ marketId: market.marketId, outcome, side: tab, price: effTick, size: sizeBase, type });
+      } catch (e) {
+        // placement-only failure boundary: the watcher dies ONLY when the POST fails
+        watcher.failed();
+        setError(e instanceof Error ? e.message : "Order rejected");
+        return;
+      }
       watcher.placed(res.fills.map((f) => f.tradeId));
-      await refreshBalances();
-    } catch (e) {
-      watcher.failed();
-      setError(e instanceof Error ? e.message : "Order rejected");
+      // a balance-refresh hiccup must not kill the watcher or mislabel the accepted order
+      try {
+        await refreshBalances();
+      } catch {
+        setError("Order placed; balance refresh failed — it will catch up.");
+      }
     } finally {
       setBusy(false);
     }
