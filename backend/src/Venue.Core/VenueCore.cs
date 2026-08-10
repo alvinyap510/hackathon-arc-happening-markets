@@ -305,6 +305,13 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
                 _sink.Fills(market.MarketId, result.Fills.Select(f => f.Trade).ToList());
                 _sink.BookChanged(market.MarketId);
             }
+            else if (result.TerminalStatus == OrderStatus.Resting)
+            {
+                // A pure no-fill rest mutates the book too; without this the live ladder
+                // only refreshes on fills (WS clients would need a reload to see it).
+                // Partial-fill remainders also rest but took the fills branch above.
+                _sink.BookChanged(market.MarketId);
+            }
             _sink.OrderUpdated(req.User, result.Order.OrderId, status);
             _sink.BalanceChanged(req.User);
             return Task.FromResult(result);

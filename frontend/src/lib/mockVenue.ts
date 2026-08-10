@@ -14,6 +14,7 @@ import type {
   Trade,
   WsEvent,
 } from "./types";
+import { foldBook, touchPrice } from "./bookFold";
 
 const LEVEL_SIZES = ["420000000", "260000000", "180000000", "120000000", "80000000"];
 const USER = "user";
@@ -85,6 +86,14 @@ export class MockVenue {
 
   // ----- balances -----
 
+  /** Open SELL remaining per (market,outcome) — the mock's token reservation. Real
+   *  parity: a SELL reserves its outcome-token size until fill/cancel (Ledger.cs). */
+  private sellReserved(marketId: string, outcome: string): bigint {
+    return this.userOrders
+      .filter((o) => o.status === "OPEN" && o.side === "SELL" && o.marketId === marketId && o.outcome === outcome)
+      .reduce((acc, o) => acc + BigInt(o.remaining), 0n);
+  }
+
   balances(): Balances {
     const reserved = this.userOrders
       .filter((o) => o.status === "OPEN" && o.side === "BUY")
@@ -95,7 +104,9 @@ export class MockVenue {
       reserved: reserved.toString(),
       available: (free - reserved).toString(),
       wallet: this.wallet,
-      positions: [...this.positions.values()].filter((p) => p.size !== "0"),
+      positions: [...this.positions.values()]
+        .filter((p) => p.size !== "0")
+        .map((p) => ({ ...p, reserved: this.sellReserved(p.marketId, p.outcome).toString() })),
     };
   }
 
@@ -157,30 +168,28 @@ export class MockVenue {
 
   bookOf(m: SimMarket, excludeId?: string): Book {
     const live = this.openOrders(m, excludeId);
-    // every order expressed in canonical YES basis:
-    // BUY YES p -> bid p · SELL YES p -> ask p · BUY NO p -> ask 1000-p · SELL NO p -> bid 1000-p
-    const bids = new Map<number, bigint>();
-    const asks = new Map<number, bigint>();
+    // Real-wire parity (Engine.BookSnapshot): the ONE canonical book is projected into
+    // FOUR DISJOINT arrays by each order's ORIGINAL outcome, NO arrays complemented into
+    // NO ticks exactly once. Canonical side: bid = (BUY == YES); NO orders flip side.
+    //   BUY YES -> yes.bids · SELL NO -> no.asks (bid) · SELL YES -> yes.asks · BUY NO -> no.bids (ask)
+    const parts = { yesBids: new Map<number, bigint>(), yesAsks: new Map<number, bigint>(), noBids: new Map<number, bigint>(), noAsks: new Map<number, bigint>() };
     for (const o of live) {
       if (o.price === null) continue;
-      const yesTick = o.outcome === "YES" ? o.price : 1000 - o.price;
-      const book = o.side === "BUY" ? bids : asks;
-      book.set(yesTick, (book.get(yesTick) ?? 0n) + BigInt(o.remaining));
+      const isBid = (o.side === "BUY") === (o.outcome === "YES");
+      const map =
+        o.outcome === "YES" ? (isBid ? parts.yesBids : parts.yesAsks) : isBid ? parts.noAsks : parts.noBids;
+      map.set(o.price, (map.get(o.price) ?? 0n) + BigInt(o.remaining));
     }
     const toLevels = (map: Map<number, bigint>, desc: boolean): BookLevel[] =>
       [...map.entries()]
         .sort((a, b) => (desc ? b[0] - a[0] : a[0] - b[0]))
         .slice(0, 8)
         .map(([price, size]) => ({ price, size: size.toString() }));
-    const yesBids = toLevels(bids, true);
-    const yesAsks = toLevels(asks, false);
-    const noBids: BookLevel[] = yesAsks.map((l) => ({ price: 1000 - l.price, size: l.size })).sort((a, b) => b.price - a.price);
-    const noAsks: BookLevel[] = yesBids.map((l) => ({ price: 1000 - l.price, size: l.size })).sort((a, b) => a.price - b.price);
     const s = this.seqs.get(`book:${m.marketId}`) ?? { generation: 1, seq: 0 };
     return {
       marketId: m.marketId,
-      yes: { bids: yesBids, asks: yesAsks },
-      no: { bids: noBids, asks: noAsks },
+      yes: { bids: toLevels(parts.yesBids, true), asks: toLevels(parts.yesAsks, false) },
+      no: { bids: toLevels(parts.noBids, true), asks: toLevels(parts.noAsks, false) },
       generation: s.generation,
       seq: s.seq,
     };
@@ -207,6 +216,9 @@ export class MockVenue {
     this.assertFundable(o);
     this.userOrders.push(o);
     this.tryFill(m, o);
+    // parity with the real backend's BookChanged-on-rest: a pure rest changes the
+    // book too, so push a frame (applyFill already emits for the fill path).
+    if (o.status === "OPEN") this.emit(`book:${o.marketId}`, this.bookOf(m));
     this.emit(`user:${this.sessionAddr}`, { order: this.publicOrder(o) });
     return o;
   }
@@ -216,23 +228,18 @@ export class MockVenue {
       const cost = (BigInt(o.size) * BigInt(o.price ?? 0)) / 1000n;
       if (cost > BigInt(this.balances().available)) throw new Error("insufficient available balance");
     } else {
+      // outcome-scoped available = position - open SELL reservation (real Ledger parity)
       const pos = this.positions.get(`${o.marketId}:${o.outcome}`);
-      if (!pos || BigInt(pos.size) < BigInt(o.size)) throw new Error("insufficient position");
+      const availPos = (pos ? BigInt(pos.size) : 0n) - this.sellReserved(o.marketId, o.outcome);
+      if (availPos < BigInt(o.size)) throw new Error("insufficient position");
     }
   }
 
-  /** Best executable price for taker order o, in o's own tick basis, excluding itself. */
+  /** Best executable price for taker order o, in o's own tick basis, excluding itself.
+   *  Sweeps the FULL canonical opposite side (shared fold), incl. cross-outcome makers. */
   crossPrice(m: SimMarket, o: SimOrder): number | null {
-    const book = this.bookOf(m, o.orderId);
-    const levels =
-      o.side === "BUY"
-        ? o.outcome === "YES"
-          ? book.yes.asks
-          : book.no.asks
-        : o.outcome === "YES"
-          ? book.yes.bids
-          : book.no.bids;
-    return levels[0]?.price ?? null;
+    const fold = foldBook(this.bookOf(m, o.orderId));
+    return touchPrice(fold, o.side, o.outcome);
   }
 
   private tryFill(m: SimMarket, o: SimOrder): void {
@@ -249,7 +256,7 @@ export class MockVenue {
     const size = BigInt(o.size);
     const cost = (size * BigInt(price)) / 1000n;
     const key = `${o.marketId}:${o.outcome}`;
-    const pos = this.positions.get(key) ?? { marketId: o.marketId, outcome: o.outcome, size: "0" };
+    const pos = this.positions.get(key) ?? { marketId: o.marketId, outcome: o.outcome, size: "0", reserved: "0" };
     if (o.side === "BUY") {
       this.chainFree = (BigInt(this.chainFree) - cost).toString();
       pos.size = (BigInt(pos.size) + size).toString();

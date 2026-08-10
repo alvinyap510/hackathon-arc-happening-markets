@@ -120,13 +120,14 @@ export class RealApi implements VenueApi {
 
   /** Wire positions carry marketId + outcome (lowercase) directly; the composite
    *  tokenId form "marketId:YES|NO" is only a fallback for older payloads. */
-  private toPosition(p: { tokenId: string; marketId?: string; outcome?: string; amount: string }): TokenPosition {
+  private toPosition(p: { tokenId: string; marketId?: string; outcome?: string; amount: string; reserved?: string }): TokenPosition {
+    const reserved = p.reserved ?? "0";
     if (p.marketId && p.outcome) {
-      return { marketId: p.marketId, outcome: p.outcome.toUpperCase() === "NO" ? "NO" : "YES", size: p.amount };
+      return { marketId: p.marketId, outcome: p.outcome.toUpperCase() === "NO" ? "NO" : "YES", size: p.amount, reserved };
     }
     const m = p.tokenId.match(/^(.+):(YES|NO)$/i);
-    if (m) return { marketId: m[1], outcome: m[2].toUpperCase() as OutcomeSide, size: p.amount };
-    return { marketId: p.tokenId, outcome: "YES", size: p.amount };
+    if (m) return { marketId: m[1], outcome: m[2].toUpperCase() as OutcomeSide, size: p.amount, reserved };
+    return { marketId: p.tokenId, outcome: "YES", size: p.amount, reserved };
   }
 
   private static isoFromUnix(s?: string | null): string {

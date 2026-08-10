@@ -1,14 +1,8 @@
 import { useMemo, useState } from "react";
 import { useStore } from "../lib/store";
-import type { Book, BookLevel, Market, OrderDirection, OrderType, OutcomeSide } from "../lib/types";
+import type { Book, BookLevel, Market, OrderType, OutcomeSide } from "../lib/types";
+import { foldBook, touchPrice, sweepLevels } from "../lib/bookFold";
 import { formatUsdc, parseUsdc, tickToPct } from "../lib/format";
-
-const DIRECTIONS: { id: OrderDirection; label: string; side: "BUY" | "SELL"; outcome: OutcomeSide }[] = [
-  { id: "BUY_YES", label: "Buy YES", side: "BUY", outcome: "YES" },
-  { id: "BUY_NO", label: "Buy NO", side: "BUY", outcome: "NO" },
-  { id: "SELL_YES", label: "Sell YES", side: "SELL", outcome: "YES" },
-  { id: "SELL_NO", label: "Sell NO", side: "SELL", outcome: "NO" },
-];
 
 /** Worst-case cost of sweeping `levels` for `size` units (buys: max cost; sells: min proceeds). */
 function sweep(levels: BookLevel[], size: string): { cost: bigint; filled: bigint } {
@@ -24,42 +18,52 @@ function sweep(levels: BookLevel[], size: string): { cost: bigint; filled: bigin
   return { cost, filled: BigInt(size) - remaining };
 }
 
+const CHIPS = [25, 50, 75] as const;
+
+/** Polymarket-fold ticket: Buy | Sell tabs x YES/NO outcome buttons with live touch
+ *  prices from the ONE consolidated book. Sell operates only on held tokens
+ *  (available = amount - reserved; the venue stays the reservation authority). */
 export default function OrderTicket({ market, book }: { market: Market; book: Book | null }) {
-  const { api, refreshBalances } = useStore();
-  const [direction, setDirection] = useState<OrderDirection>("BUY_YES");
+  const { api, balances, refreshBalances } = useStore();
+  const [tab, setTab] = useState<"BUY" | "SELL">("BUY");
+  const [outcome, setOutcome] = useState<OutcomeSide>("YES");
   const [type, setType] = useState<OrderType>("LIMIT");
   const [pct, setPct] = useState("50.0");
   const [size, setSize] = useState("100");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const d = DIRECTIONS.find((x) => x.id === direction)!;
+  const fold = useMemo(() => (book ? foldBook(book) : null), [book]);
+  const touch = (s: "BUY" | "SELL", o: OutcomeSide) => (fold ? touchPrice(fold, s, o) : null);
 
-  // MARKET is emulated client-side as an aggressive limit at the far touch (review R3)
-  const touchLevels = book
-    ? d.side === "BUY"
-      ? d.outcome === "YES"
-        ? book.yes.asks
-        : book.no.asks
-      : d.outcome === "YES"
-        ? book.yes.bids
-        : book.no.bids
-    : [];
-  const marketTick = touchLevels[0]?.price ?? null;
+  // Sell tab: the user's position in the SELECTED outcome, reserved-aware.
+  const position = (balances?.positions ?? []).find((p) => p.marketId === market.marketId && p.outcome === outcome);
+  const held = BigInt(position?.size ?? "0");
+  const reserved = BigInt(position?.reserved ?? "0");
+  const available = held > reserved ? held - reserved : 0n;
+
+  // MARKET is emulated client-side as an aggressive sweep across the FULL canonical
+  // opposite side (all four intents see cross-outcome makers — bookFold.sweepLevels).
+  const marketLevels = fold ? sweepLevels(fold, tab, outcome) : [];
+  const marketTick = marketLevels[0]?.price ?? null;
 
   // ticks are 0.1% steps, so a 1-decimal percent is lossless: tick = pct x 10
   const effTick = type === "MARKET" ? marketTick : Math.round(Number(pct) * 10);
   const sizeBase = parseUsdc(size);
 
-  // limit: single-price quote. market: worst-case sweep across levels (audit: best-touch understates).
   const quote = useMemo(() => {
     if (sizeBase === null || BigInt(sizeBase) <= 0n) return null;
     if (type === "LIMIT") {
       if (!effTick || effTick < 1 || effTick > 999) return null;
       return { cost: (BigInt(sizeBase) * BigInt(effTick)) / 1000n, filled: BigInt(sizeBase) };
     }
-    return sweep(touchLevels, sizeBase);
-  }, [type, effTick, sizeBase, touchLevels]);
+    return sweep(marketLevels, sizeBase);
+  }, [type, effTick, sizeBase, marketLevels]);
+
+  const sellBlocked = tab === "SELL" && available <= 0n;
+
+  const setChip = (p: number) => setSize(formatUsdc(((available * BigInt(p)) / 100n).toString()));
+  const setMax = () => setSize(formatUsdc(available.toString()));
 
   const place = async () => {
     setError(null);
@@ -67,14 +71,7 @@ export default function OrderTicket({ market, book }: { market: Market; book: Bo
     if (effTick === null || !Number.isFinite(effTick) || effTick < 1 || effTick > 999) return setError("No usable price.");
     setBusy(true);
     try {
-      await api.placeOrder({
-        marketId: market.marketId,
-        outcome: d.outcome,
-        side: d.side,
-        price: effTick,
-        size: sizeBase,
-        type,
-      });
+      await api.placeOrder({ marketId: market.marketId, outcome, side: tab, price: effTick, size: sizeBase, type });
       await refreshBalances();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Order rejected");
@@ -84,27 +81,49 @@ export default function OrderTicket({ market, book }: { market: Market; book: Bo
   };
 
   const partial = quote !== null && quote.filled < (sizeBase === null ? 0n : BigInt(sizeBase));
+  const actionLabel = `${tab === "BUY" ? "Buy" : "Sell"} ${outcome}`;
 
   return (
     <div className="panel p-4">
-      <div className="grid grid-cols-4 gap-1 rounded-lg bg-ink-900 p-1">
-        {DIRECTIONS.map((x) => (
+      {/* Buy | Sell tabs */}
+      <div className="flex items-baseline gap-4 border-b border-ink-700/70 pb-2">
+        {(["BUY", "SELL"] as const).map((t) => (
           <button
-            key={x.id}
-            onClick={() => setDirection(x.id)}
-            className={`rounded-md px-1 py-1.5 text-[11px] font-semibold transition-colors ${
-              direction === x.id
-                ? x.outcome === "YES"
-                  ? "bg-yes-500/20 text-yes-300"
-                  : "bg-no-500/20 text-no-300"
-                : "text-ink-300 hover:text-paper-200"
+            key={t}
+            onClick={() => setTab(t)}
+            className={`text-sm font-semibold transition-colors ${
+              tab === t ? "text-paper-100 underline decoration-gold-400 decoration-2 underline-offset-8" : "text-ink-400 hover:text-paper-200"
             }`}
           >
-            {x.label}
+            {t === "BUY" ? "Buy" : "Sell"}
           </button>
         ))}
       </div>
 
+      {/* Outcome buttons with live touch prices from the ONE book */}
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        {(["YES", "NO"] as const).map((o) => {
+          const p = touch(tab, o);
+          const active = outcome === o;
+          return (
+            <button
+              key={o}
+              onClick={() => setOutcome(o)}
+              className={`rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors ${
+                active
+                  ? o === "YES"
+                    ? "bg-yes-500/90 text-ink-950"
+                    : "bg-no-500/90 text-ink-950"
+                  : "bg-ink-900 text-ink-300 hover:text-paper-200"
+              }`}
+            >
+              {o} <span className="num">{p === null ? "—" : tickToPct(p)}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Limit | Market (both tabs) */}
       <div className="mt-3 grid grid-cols-2 gap-1 rounded-lg bg-ink-900 p-1">
         {(["LIMIT", "MARKET"] as OrderType[]).map((t) => (
           <button
@@ -118,6 +137,38 @@ export default function OrderTicket({ market, book }: { market: Market; book: Bo
           </button>
         ))}
       </div>
+
+      {/* Sell tab: reserved-aware shares + chips */}
+      {tab === "SELL" && (
+        <div className="mt-3 flex items-center justify-between text-xs">
+          <span className="text-ink-400">
+            Shares <span className="num text-paper-200">{formatUsdc(available.toString())}</span>
+            {reserved > 0n && <span className="num text-ink-500"> ({formatUsdc(reserved.toString())} reserved)</span>}
+          </span>
+          <span className="flex gap-1">
+            {CHIPS.map((p) => {
+              const chip = (available * BigInt(p)) / 100n;
+              return (
+                <button
+                  key={p}
+                  onClick={() => setChip(p)}
+                  disabled={chip <= 0n}
+                  className="rounded bg-ink-900 px-1.5 py-0.5 text-[10px] font-semibold text-ink-300 hover:text-paper-200 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {p}%
+                </button>
+              );
+            })}
+            <button
+              onClick={setMax}
+              disabled={available <= 0n}
+              className="rounded bg-ink-900 px-1.5 py-0.5 text-[10px] font-semibold text-ink-300 hover:text-paper-200 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Max
+            </button>
+          </span>
+        </div>
+      )}
 
       <div className="mt-3 grid grid-cols-2 gap-2">
         <div>
@@ -142,7 +193,13 @@ export default function OrderTicket({ market, book }: { market: Market; book: Bo
 
       <div className="mt-3 flex items-center justify-between border-t border-ink-700/70 pt-3 text-xs">
         <span className="text-ink-400">
-          {d.side === "BUY" ? (type === "MARKET" ? "Max cost (sweep)" : "Max cost") : type === "MARKET" ? "Min proceeds (sweep)" : "Proceeds"}
+          {tab === "BUY"
+            ? type === "MARKET"
+              ? "Estimated max cost (sweep)"
+              : "Max cost"
+            : type === "MARKET"
+              ? "Estimated min proceeds (sweep)"
+              : "Proceeds"}
         </span>
         <span className="num text-paper-100">{quote === null ? "—" : `${formatUsdc(quote.cost.toString())} USDC`}</span>
       </div>
@@ -153,16 +210,17 @@ export default function OrderTicket({ market, book }: { market: Market; book: Bo
         </p>
       )}
 
+      {sellBlocked && <p className="mt-2 text-xs text-ink-400">No {outcome} to sell.</p>}
       {error && <p className="mt-2 text-xs text-no-400">{error}</p>}
 
       <button
         onClick={place}
-        disabled={busy || market.status !== "LIVE"}
+        disabled={busy || market.status !== "LIVE" || sellBlocked}
         className={`btn mt-3 w-full ${
-          d.outcome === "YES" ? "bg-yes-500/90 text-ink-950 hover:bg-yes-400" : "bg-no-500/90 text-ink-950 hover:bg-no-400"
+          outcome === "YES" ? "bg-yes-500/90 text-ink-950 hover:bg-yes-400" : "bg-no-500/90 text-ink-950 hover:bg-no-400"
         }`}
       >
-        {busy ? "Placing…" : d.label}
+        {busy ? "Placing…" : actionLabel}
       </button>
     </div>
   );

@@ -13,8 +13,6 @@ export type OrderSide = "BUY" | "SELL";
 export type OrderType = "LIMIT" | "MARKET";
 export type OrderStatus = "OPEN" | "FILLED" | "PARTIAL" | "CANCELLED" | "REJECTED";
 
-/** UI-only: the 4-direction ticket surface. Maps to outcome+side at the wire. */
-export type OrderDirection = "BUY_YES" | "BUY_NO" | "SELL_YES" | "SELL_NO";
 
 export type MarketStatus = "LIVE" | "RESOLVED";
 export type RfmPhase = "OPEN" | "COMMIT" | "REVEAL" | "FINALIZED" | "FAILED" | "CANCELLED";
@@ -31,11 +29,13 @@ export interface Session {
 
 // ----- balances -----
 
-/** Internal position form, derived from the wire {tokenId, amount}. */
+/** Internal position form, derived from the wire {tokenId, amount, reserved}.
+ *  `reserved` = size committed to resting SELLs; sellable = size - reserved. */
 export interface TokenPosition {
   marketId: MarketId;
   outcome: OutcomeSide;
   size: string;
+  reserved: string;
 }
 
 /** Wire: GET /v1/balances. G4 adds `wallet` (on-chain MockUSDC balance).
@@ -46,7 +46,7 @@ export interface BalancesView {
   reserved: string;
   available: string;
   wallet?: string;
-  positions: { tokenId: string; marketId?: string; outcome?: string; amount: string }[];
+  positions: { tokenId: string; marketId?: string; outcome?: string; amount: string; reserved?: string }[];
 }
 
 export interface Balances {

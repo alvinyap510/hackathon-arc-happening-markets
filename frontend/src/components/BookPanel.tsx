@@ -1,4 +1,5 @@
 import type { Book, BookLevel } from "../lib/types";
+import { foldBook } from "../lib/bookFold";
 import { formatUsdc, tickToPct } from "../lib/format";
 
 function Ladder({ title, levels, tone }: { title: string; levels: BookLevel[]; tone: "yes" | "no" }) {
@@ -23,31 +24,23 @@ function Ladder({ title, levels, tone }: { title: string; levels: BookLevel[]; t
   );
 }
 
-function BookSide({ label, side }: { label: string; side: Book["yes"] }) {
-  const mid =
-    side.bids.length > 0 && side.asks.length > 0
-      ? Math.round((side.bids[0].price + side.asks[0].price) / 2)
-      : null;
+/** ONE consolidated YES-basis ladder — the venue keeps a single book per market;
+ *  bids = BUY YES + SELL NO, asks = SELL YES + BUY NO (complemented once). */
+export default function BookPanel({ book }: { book: Book | null }) {
+  if (!book) return <div className="panel p-4 text-sm text-ink-400">Loading book…</div>;
+  const fold = foldBook(book);
+  const state =
+    fold.mid !== null ? `mid ${tickToPct(fold.mid)}` : fold.bids.length + fold.asks.length > 0 ? "one-sided" : "no book";
   return (
     <div className="panel-inset p-3">
       <div className="mb-2 flex items-baseline justify-between">
-        <span className="text-xs font-semibold text-paper-200">{label}</span>
-        <span className="num text-[11px] text-ink-400">{mid === null ? "no book" : `mid ${tickToPct(mid)}`}</span>
+        <span className="text-xs font-semibold text-paper-200">Order book</span>
+        <span className="num text-[11px] text-ink-400">{state}</span>
       </div>
       <div className="grid grid-cols-2 gap-3">
-        <Ladder title="Bids" levels={side.bids} tone="yes" />
-        <Ladder title="Asks" levels={side.asks} tone="no" />
+        <Ladder title="Bids" levels={fold.bids} tone="yes" />
+        <Ladder title="Asks" levels={fold.asks} tone="no" />
       </div>
-    </div>
-  );
-}
-
-export default function BookPanel({ book }: { book: Book | null }) {
-  if (!book) return <div className="panel p-4 text-sm text-ink-400">Loading book…</div>;
-  return (
-    <div className="grid gap-3 md:grid-cols-2">
-      <BookSide label="YES" side={book.yes} />
-      <BookSide label="NO" side={book.no} />
     </div>
   );
 }
