@@ -2,6 +2,16 @@ import { formatUsdcInput } from "../lib/format";
 
 const CHIPS = [25, 50, 75] as const;
 
+/** The chip action model, exported for direct unit-testing of the button contract:
+ *  each entry is (label, base-unit value, the exact string written to the size input). */
+export function chipActions(available: bigint): { label: string; value: bigint; write: string }[] {
+  const chip = (p: number) => (available * BigInt(p)) / 100n;
+  return [
+    ...CHIPS.map((p) => ({ label: `${p}%`, value: chip(p), write: formatUsdcInput(chip(p).toString()) })),
+    { label: "Max", value: available, write: formatUsdcInput(available.toString()) },
+  ];
+}
+
 /** Reserved-aware shares row for the Sell tab: 25/50/75/Max chips computed in
  *  base-unit BigInt and written to the size input via the LOSSLESS input formatter
  *  (parseUsdc round-trips every base unit — display formatUsdc would truncate).
@@ -15,7 +25,7 @@ export default function SellShares({
   reserved: bigint;
   onSize: (v: string) => void;
 }) {
-  const chip = (p: number) => (available * BigInt(p)) / 100n;
+  const actions = chipActions(available);
   return (
     <div className="mt-3 flex items-center justify-between text-xs">
       <span className="text-ink-400">
@@ -23,23 +33,16 @@ export default function SellShares({
         {reserved > 0n && <span className="num text-ink-500"> ({formatUsdcInput(reserved.toString())} reserved)</span>}
       </span>
       <span className="flex gap-1">
-        {CHIPS.map((p) => (
+        {actions.map((a) => (
           <button
-            key={p}
-            onClick={() => onSize(formatUsdcInput(chip(p).toString()))}
-            disabled={chip(p) <= 0n}
+            key={a.label}
+            onClick={() => onSize(a.write)}
+            disabled={a.value <= 0n}
             className="rounded bg-ink-900 px-1.5 py-0.5 text-[10px] font-semibold text-ink-300 hover:text-paper-200 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {p}%
+            {a.label}
           </button>
         ))}
-        <button
-          onClick={() => onSize(formatUsdcInput(available.toString()))}
-          disabled={available <= 0n}
-          className="rounded bg-ink-900 px-1.5 py-0.5 text-[10px] font-semibold text-ink-300 hover:text-paper-200 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          Max
-        </button>
       </span>
     </div>
   );
