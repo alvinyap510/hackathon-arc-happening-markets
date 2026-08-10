@@ -31,7 +31,7 @@ export default function Layout({
 
   return (
     <div className="flex min-h-screen">
-      <aside className="flex w-60 shrink-0 flex-col border-r border-ink-700 bg-ink-950/60 px-5 py-6">
+      <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col overflow-y-auto border-r border-ink-700 bg-ink-950/60 px-5 py-6">
         <div className="flex items-center gap-2.5 px-1">
           <img src="/brand/happening-mark-square-padded-transparent.png" alt="" className="h-8 w-8" />
           <div>
