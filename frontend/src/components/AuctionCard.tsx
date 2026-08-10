@@ -121,7 +121,19 @@ export default function AuctionCard({
                 r.valid ? "border-ink-600 bg-ink-900" : "border-no-500/50 bg-no-900/30"
               }`}
             >
-              <span className="num text-ink-300">{shortAddr(r.mm)}</span>
+              {r.txHash ? (
+                <a
+                  href={txUrl(r.txHash)}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="View the reveal transaction on Arcscan"
+                  className="num text-ink-300 transition-colors hover:text-gold-300"
+                >
+                  {shortAddr(r.mm)} ↗
+                </a>
+              ) : (
+                <span className="num text-ink-300">{shortAddr(r.mm)}</span>
+              )}
               <span className="num font-semibold text-paper-100">{tickToPct(r.priceTick)}</span>
               <span className="num text-paper-300">{formatUsdc(r.size, 0)}</span>
               {r.valid ? (

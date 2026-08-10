@@ -185,7 +185,7 @@ public sealed class SettlementBatcher
 
             if (outcome.Status == TxStatus.Confirmed)
             {
-                await _core.ConfirmBatchAsync(batchId, remaining);
+                await _core.ConfirmBatchAsync(batchId, txHash!, remaining);
                 return;
             }
 
@@ -196,7 +196,7 @@ public sealed class SettlementBatcher
 
             if (outcome.Status == TxStatus.Confirmed)
             {
-                await _core.ConfirmBatchAsync(batchId, remaining);
+                await _core.ConfirmBatchAsync(batchId, txHash!, remaining);
                 return;
             }
 
@@ -270,7 +270,7 @@ public sealed class SettlementBatcher
                 {
                     var outcome = await ReconcileAsync(lookup.TxHash!, ct);
                     if (outcome.Status == TxStatus.Confirmed)
-                        await _core.ConfirmBatchAsync(batchId, matches); // mined -> settle it
+                        await _core.ConfirmBatchAsync(batchId, lookup.TxHash!, matches); // mined -> settle it
                     else if (outcome.Status == TxStatus.Reverted)
                     {
                         // definitively not-mined (reverted, nothing consumed): re-queue for a fresh

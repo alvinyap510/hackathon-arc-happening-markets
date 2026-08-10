@@ -45,9 +45,16 @@ export default function RfmPage({ onOpenMarket }: { onOpenMarket: (id: string) =
 
           {requests.length > 0 && (
             <div className="panel p-4">
-              <div className="label-caps mb-2">Requests</div>
+              {/* honest split: born = successfully matched; everything else stays neutral
+                  (the list also holds FAILED/CANCELLED, so no "in progress" claim) */}
+              {[
+                { label: "Successfully Matched Requests", rows: requests.filter((r) => r.bornMarketId) },
+                { label: "Other Requests", rows: requests.filter((r) => !r.bornMarketId) },
+              ].filter((g) => g.rows.length > 0).map((g) => (
+              <div key={g.label} className="mb-3 last:mb-0">
+              <div className="label-caps mb-2">{g.label}</div>
               <div className="space-y-1.5">
-                {requests.map((r) => (
+                {g.rows.map((r) => (
                   <button
                     key={r.requestId}
                     onClick={() => setSelected(r.requestId)}
@@ -67,6 +74,8 @@ export default function RfmPage({ onOpenMarket }: { onOpenMarket: (id: string) =
                   </button>
                 ))}
               </div>
+              </div>
+              ))}
             </div>
           )}
         </div>

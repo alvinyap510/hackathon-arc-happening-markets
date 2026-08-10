@@ -1,23 +1,11 @@
 import { useMemo, useState } from "react";
 import { useStore } from "../lib/store";
-import type { Book, BookLevel, Market, OrderType, OutcomeSide } from "../lib/types";
-import { foldBook, touchPrice, sweepLevels } from "../lib/bookFold";
+import type { Book, Market, OrderType, OutcomeSide } from "../lib/types";
+import { foldBook, touchPrice, sweepLevels, sweep } from "../lib/bookFold";
+import { useSettlementToast } from "../lib/useSettlementToast";
+import Toast from "./Toast";
 import { formatUsdc, parseUsdc, tickToPct } from "../lib/format";
 import SellShares from "./SellShares";
-
-/** Worst-case cost of sweeping `levels` for `size` units (buys: max cost; sells: min proceeds). */
-function sweep(levels: BookLevel[], size: string): { cost: bigint; filled: bigint } {
-  let remaining = BigInt(size);
-  let cost = 0n;
-  for (const l of levels) {
-    const avail = BigInt(l.size);
-    const take = remaining > avail ? avail : remaining;
-    cost += (take * BigInt(l.price)) / 1000n;
-    remaining -= take;
-    if (remaining === 0n) break;
-  }
-  return { cost, filled: BigInt(size) - remaining };
-}
 
 /** Polymarket-fold ticket: Buy | Sell tabs x YES/NO outcome buttons with live touch
  *  prices from the ONE consolidated book. Sell operates only on held tokens
@@ -32,6 +20,7 @@ export default function OrderTicket({ market, book }: { market: Market; book: Bo
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fold = useMemo(() => (book ? foldBook(book) : null), [book]);
+  const settle = useSettlementToast(api, market.marketId);
   const touch = (s: "BUY" | "SELL", o: OutcomeSide) => (fold ? touchPrice(fold, s, o) : null);
 
   // Sell tab: the user's position in the SELECTED outcome, reserved-aware. The Sell
@@ -70,10 +59,13 @@ export default function OrderTicket({ market, book }: { market: Market; book: Bo
     if (sizeBase === null || BigInt(sizeBase) <= 0n) return setError("Enter a size.");
     if (effTick === null || !Number.isFinite(effTick) || effTick < 1 || effTick > 999) return setError("No usable price.");
     setBusy(true);
+    const watcher = settle.arm(); // BEFORE the POST: a fast settlement frame must not be missed
     try {
-      await api.placeOrder({ marketId: market.marketId, outcome, side: tab, price: effTick, size: sizeBase, type });
+      const res = await api.placeOrder({ marketId: market.marketId, outcome, side: tab, price: effTick, size: sizeBase, type });
+      watcher.placed(res.fills.map((f) => f.tradeId));
       await refreshBalances();
     } catch (e) {
+      watcher.failed();
       setError(e instanceof Error ? e.message : "Order rejected");
     } finally {
       setBusy(false);
@@ -186,6 +178,7 @@ export default function OrderTicket({ market, book }: { market: Market; book: Bo
       {sellBlocked && <p className="mt-2 text-xs text-ink-400">No {outcome} to sell.</p>}
       {error && <p className="mt-2 text-xs text-no-400">{error}</p>}
 
+      <Toast toast={settle.toast} onDismiss={settle.dismiss} />
       <button
         onClick={place}
         disabled={busy || market.status !== "LIVE" || sellBlocked}

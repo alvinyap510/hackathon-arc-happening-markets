@@ -16,7 +16,10 @@ public interface IEventSink
     void Fills(string marketId, IReadOnlyList<SettlementTrade> trades);
     void OrderUpdated(string user, string orderId, string status);
     void BalanceChanged(string user);
-    void SettlementOutcome(string marketId, string batchId, TxStatus status, string? error, IReadOnlyList<string> tradeIds);
+    /// <summary>txHash is CONFIRMED-ONLY provenance (the settleBatch tx). Reverted/unwind
+    /// emissions pass null; consumers must branch on status, never infer failure from a
+    /// missing hash.</summary>
+    void SettlementOutcome(string marketId, string batchId, TxStatus status, string? error, IReadOnlyList<string> tradeIds, string? txHash);
     void RfmChanged(BigInteger requestId);
     void MarketBorn(string marketId);
     void GenerationBump();

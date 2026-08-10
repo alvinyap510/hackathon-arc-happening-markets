@@ -6,6 +6,7 @@ import { MockVenue } from "./mockVenue";
 import { RfmManager, MOCK_COMMIT_MS, type RfmRuntime } from "./mockRfm";
 import type {
   Balances,
+  PlaceOrderResult,
   Book,
   Market,
   MarketId,
@@ -122,8 +123,22 @@ export class MockApi implements VenueApi {
     return this.venue.markets.find((x) => x.marketId === id)?.trades ?? [];
   }
 
-  async placeOrder(order: NewOrder): Promise<Order> {
-    return this.venue.publicOrder(this.venue.place(order));
+  async placeOrder(order: NewOrder): Promise<PlaceOrderResult> {
+    const placed = this.venue.place(order);
+    // Mirror the real POST response shape. Mock fills settle synchronously; the
+    // (single) fill's trade is the newest trade on the market for this order.
+    const m = this.venue.markets.find((x) => x.marketId === order.marketId);
+    const fills =
+      placed.status === "FILLED" && m && m.trades.length > 0
+        ? [{ tradeId: m.trades[0].txHash ?? "", tradeClass: "transfer", size: placed.size, priceTick: placed.price ?? 0 }]
+        : [];
+    return {
+      orderId: placed.orderId,
+      status: placed.status.toLowerCase(),
+      size: placed.size,
+      remaining: placed.remaining,
+      fills,
+    };
   }
 
   async cancelOrder(id: string): Promise<void> {

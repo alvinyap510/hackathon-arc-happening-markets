@@ -27,10 +27,11 @@ public class RfmCoordinatorTests
         Assert.Equal(RfmPhase.Commit, req.PhaseAt(now + 10));
         Assert.Equal(BigInteger.One, req.CommitCount);
 
-        coord.Apply(new QuoteRevealed(TestData.Rfm, 3, 0, "0x", 1, TestData.Alice, 600, 200_000, true));
+        coord.Apply(new QuoteRevealed(TestData.Rfm, 3, 0, "0xrevealtx", 1, TestData.Alice, 600, 200_000, true));
         var reveal = Assert.Single(req.Reveals);
         Assert.Equal(TestData.Alice, reveal.Mm);
         Assert.True(reveal.InRange);
+        Assert.Equal("0xrevealtx", reveal.TxHash); // provenance: the reveal's on-chain receipt
 
         // still inside the reveal window -> REVEAL, not finalize-ready
         Assert.Equal(RfmPhase.Reveal, req.PhaseAt(now + 130));

@@ -8,6 +8,7 @@
 import type { VenueApi } from "./api";
 import type {
   Balances,
+  PlaceOrderResult,
   BalancesView,
   Book,
   FillView,
@@ -195,7 +196,7 @@ export class RealApi implements VenueApi {
     return { marketId: x.marketId ?? marketIdHint, yesBasisTick, size: x.size, at, txHash: x.txHash };
   }
 
-  placeOrder(order: NewOrder): Promise<Order> {
+  placeOrder(order: NewOrder): Promise<PlaceOrderResult> {
     return this.req("POST", "/orders", order);
   }
 
@@ -257,6 +258,7 @@ export class RealApi implements VenueApi {
       priceTick: Number(r.tick),
       size: r.size,
       valid: r.inRange,
+      txHash: r.txHash ?? null,
     }));
     let final: RfmStateData["final"] = null;
     if (request.phase === "FINALIZED") {

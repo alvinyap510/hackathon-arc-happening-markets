@@ -149,7 +149,7 @@ public static class RfmEndpoints
             phase = r.PhaseAt(now).ToString().ToLowerInvariant(),
             postedTxHash = r.PostedTxHash,
             born = r.MarketId == null ? null : new { marketId = r.MarketId, marginalYesTick = r.BornMarginalYesTick, vwapYesTick = r.BornVwapYesTick, filled = r.BornFilledQuantity?.ToString(), txHash = r.BornTxHash },
-            reveals = r.Reveals.Select(v => new { mm = v.Mm, tick = v.Tick.ToString(), size = v.Size.ToString(), inRange = v.InRange }).ToList(),
+            reveals = r.Reveals.Select(v => new { mm = v.Mm, tick = v.Tick.ToString(), size = v.Size.ToString(), inRange = v.InRange, txHash = v.TxHash }).ToList(),
             fills = r.Fills.Select(f => new { mm = f.Mm, tick = f.Tick.ToString(), size = f.Size.ToString() }).ToList(),
         };
     }

@@ -55,3 +55,19 @@ export function sweepLevels(fold: FoldedBook, side: OrderSide, outcome: OutcomeS
   const canonical = side === "BUY" ? (outcome === "YES" ? fold.asks : fold.bids) : outcome === "YES" ? fold.bids : fold.asks;
   return outcome === "YES" ? canonical : c(canonical);
 }
+
+/** Worst-case cost of sweeping `levels` for `size` units (buys: max cost; sells: min
+ *  proceeds). Aggregate-level estimate: settlement floors per fill, so label quotes
+ *  as estimated. */
+export function sweep(levels: BookLevel[], size: string): { cost: bigint; filled: bigint } {
+  let remaining = BigInt(size);
+  let cost = 0n;
+  for (const l of levels) {
+    const avail = BigInt(l.size);
+    const take = remaining > avail ? avail : remaining;
+    cost += (take * BigInt(l.price)) / 1000n;
+    remaining -= take;
+    if (remaining === 0n) break;
+  }
+  return { cost, filled: BigInt(size) - remaining };
+}

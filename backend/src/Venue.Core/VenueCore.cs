@@ -235,7 +235,7 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
         {
             _engine.UnwindOrder(pending.MakerOrderId);
             _engine.UnwindOrder(pending.TakerOrderId);
-            _sink.SettlementOutcome(marketId, "", TxStatus.Reverted, "market_resolved", new[] { pending.Trade.TradeId });
+            _sink.SettlementOutcome(marketId, "", TxStatus.Reverted, "market_resolved", new[] { pending.Trade.TradeId }, null);
         }
         foreach (var order in _engine.CancelMarket(marketId))
             BroadcastCancelled(order);
@@ -415,7 +415,7 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
                 {
                     _engine.UnwindOrder(m.MakerOrderId);
                     _engine.UnwindOrder(m.TakerOrderId);
-                    _sink.SettlementOutcome(m.Trade.MarketId, "", TxStatus.Reverted, "market_closed", new[] { m.Trade.TradeId });
+                    _sink.SettlementOutcome(m.Trade.MarketId, "", TxStatus.Reverted, "market_closed", new[] { m.Trade.TradeId }, null);
                     _sink.BookChanged(m.Trade.MarketId);
                 }
                 else
@@ -427,7 +427,7 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
         });
     }
 
-    public async Task ConfirmBatchAsync(string batchId, IReadOnlyList<MatchedTrade> matches)
+    public async Task ConfirmBatchAsync(string batchId, string txHash, IReadOnlyList<MatchedTrade> matches)
     {
         await _gate.RunAsync(() =>
         {
@@ -441,7 +441,7 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
             var ids = matches.Select(m => m.Trade.TradeId).ToList();
             foreach (var g in matches.GroupBy(m => m.Trade.MarketId))
             {
-                _sink.SettlementOutcome(g.Key, batchId, TxStatus.Confirmed, null, ids);
+                _sink.SettlementOutcome(g.Key, batchId, TxStatus.Confirmed, null, ids, txHash);
                 _sink.BookChanged(g.Key);
             }
             foreach (var u in matches.SelectMany(m => new[] { m.Maker.User, m.Taker.User }).Distinct())
@@ -462,7 +462,7 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
             // reservation must still be released when its fill fails on chain.
             _engine.UnwindOrder(failing.MakerOrderId);
             _engine.UnwindOrder(failing.TakerOrderId);
-            _sink.SettlementOutcome(failing.Trade.MarketId, batchId, TxStatus.Reverted, revert.ErrorName, new[] { failing.Trade.TradeId });
+            _sink.SettlementOutcome(failing.Trade.MarketId, batchId, TxStatus.Reverted, revert.ErrorName, new[] { failing.Trade.TradeId }, null);
             _sink.BookChanged(failing.Trade.MarketId);
             _sink.OrderUpdated(failing.Maker.User, failing.MakerOrderId, "rejected");
             _sink.OrderUpdated(failing.Taker.User, failing.TakerOrderId, "rejected");
@@ -482,7 +482,7 @@ public sealed class VenueCore : ISettlementCoordinator, IAsyncDisposable
             var ids = matches.Select(m => m.Trade.TradeId).ToList();
             foreach (var g in matches.GroupBy(m => m.Trade.MarketId))
             {
-                _sink.SettlementOutcome(g.Key, "", TxStatus.Reverted, reason, ids);
+                _sink.SettlementOutcome(g.Key, "", TxStatus.Reverted, reason, ids, null);
                 _sink.BookChanged(g.Key);
             }
             return Task.CompletedTask;

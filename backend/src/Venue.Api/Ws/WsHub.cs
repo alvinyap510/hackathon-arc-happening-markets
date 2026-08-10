@@ -72,7 +72,7 @@ public sealed class WsHub : IEventSink
     public void BalanceChanged(string user)
         => Broadcast($"user:{Domain.Addresses.Normalize(user)}", "balance", () => BuildBalancesAsync(user));
 
-    public void SettlementOutcome(string marketId, string batchId, TxStatus status, string? error, IReadOnlyList<string> tradeIds)
+    public void SettlementOutcome(string marketId, string batchId, TxStatus status, string? error, IReadOnlyList<string> tradeIds, string? txHash)
     {
         var channel = $"trades:{Normalize(marketId)}";
         var payload = new
@@ -81,6 +81,7 @@ public sealed class WsHub : IEventSink
             status = status.ToString().ToLowerInvariant(),
             error,
             tradeIds,
+            txHash, // confirmed-only provenance; null on reverted/unwind emissions
             settledAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
         };
         Broadcast(channel, "settlement", () => Task.FromResult<object>(payload));
@@ -228,7 +229,7 @@ public sealed class WsHub : IEventSink
             commitCount = r.CommitCount.ToString(),
             phase = r.PhaseAt(now).ToString().ToLowerInvariant(),
             born = r.MarketId == null ? null : new { marketId = r.MarketId, marginalYesTick = r.BornMarginalYesTick, vwapYesTick = r.BornVwapYesTick, filled = r.BornFilledQuantity?.ToString() },
-            reveals = r.Reveals.Select(v => new { mm = v.Mm, tick = v.Tick.ToString(), size = v.Size.ToString(), inRange = v.InRange }).ToList(),
+            reveals = r.Reveals.Select(v => new { mm = v.Mm, tick = v.Tick.ToString(), size = v.Size.ToString(), inRange = v.InRange, txHash = v.TxHash }).ToList(),
         };
     }
 

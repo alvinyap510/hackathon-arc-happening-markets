@@ -2,6 +2,7 @@
 // Real vs mock is chosen once here by VITE_API_MODE; nothing else in the app knows.
 
 import type {
+  PlaceOrderResult,
   Balances,
   Book,
   Market,
@@ -31,7 +32,7 @@ export interface VenueApi {
   getBook(id: MarketId): Promise<Book>;
   listTrades(id: MarketId): Promise<Trade[]>;
 
-  placeOrder(order: NewOrder): Promise<Order>;
+  placeOrder(order: NewOrder): Promise<PlaceOrderResult>;
   cancelOrder(id: string): Promise<void>;
   listOpenOrders(): Promise<Order[]>;
   listPositions(): Promise<TokenPosition[]>;

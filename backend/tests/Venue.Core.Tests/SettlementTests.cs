@@ -126,6 +126,7 @@ public class SettlementTests
         Assert.Equal(1, coordinator.Repaired[0].Revert.FailIndex);
         Assert.Equal(3, coordinator.Repaired[0].Matches.Count);
         Assert.Single(coordinator.Confirmed);
+        Assert.Equal("0x2", coordinator.Confirmed[0].TxHash); // direct-confirm route preserves the submitted hash
         Assert.Equal(2, coordinator.Confirmed[0].Matches.Count); // failing trade dropped
         Assert.DoesNotContain(coordinator.Confirmed[0].Matches, m => m.Trade.TradeId == coordinator.Repaired[0].Matches[1].Trade.TradeId);
         Assert.Empty(coordinator.CancelledAll);
@@ -211,6 +212,7 @@ public class SettlementTests
         try { await run; } catch (OperationCanceledException) { /* expected */ }
 
         Assert.Single(coordinator.Confirmed);
+        Assert.Equal("0x1", coordinator.Confirmed[0].TxHash); // deferred-reconcile route uses lookup.TxHash
         Assert.Empty(coordinator.CancelledAll); // reservations were never released
         Assert.Equal(0, batcher.DeferredCount);
     }
@@ -279,6 +281,7 @@ public class SettlementTests
         // The submission exception did NOT unwind: the accepted tx was located by batchId and
         // confirmed when it mined — reservation never released prematurely, no double execution.
         Assert.Single(coordinator.Confirmed);
+        Assert.Equal("0x1", coordinator.Confirmed[0].TxHash); // located-tx route preserves the found hash
         Assert.Empty(coordinator.CancelledAll);
         Assert.Empty(coordinator.Repaired);
         Assert.Equal(1, gateway.SettlementSubmits);
@@ -531,13 +534,13 @@ public class SettlementTests
 
     private sealed class RecordingCoordinator : ISettlementCoordinator
     {
-        public List<(string BatchId, IReadOnlyList<MatchedTrade> Matches)> Confirmed { get; } = new();
+        public List<(string BatchId, string TxHash, IReadOnlyList<MatchedTrade> Matches)> Confirmed { get; } = new();
         public List<(string BatchId, IReadOnlyList<MatchedTrade> Matches, BatchRevertInfo Revert)> Repaired { get; } = new();
         public List<(IReadOnlyList<MatchedTrade> Matches, string Reason)> CancelledAll { get; } = new();
 
-        public Task ConfirmBatchAsync(string batchId, IReadOnlyList<MatchedTrade> matches)
+        public Task ConfirmBatchAsync(string batchId, string txHash, IReadOnlyList<MatchedTrade> matches)
         {
-            Confirmed.Add((batchId, matches));
+            Confirmed.Add((batchId, txHash, matches));
             return Task.CompletedTask;
         }
 

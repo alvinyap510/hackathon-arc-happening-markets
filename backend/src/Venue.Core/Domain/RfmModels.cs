@@ -3,7 +3,7 @@ using System.Numerics;
 namespace Venue.Domain;
 
 /// <summary>A revealed quote on an RFM request (raw requested-outcome ticks).</summary>
-public sealed record RevealView(string Mm, BigInteger Tick, BigInteger Size, bool InRange);
+public sealed record RevealView(string Mm, BigInteger Tick, BigInteger Size, bool InRange, string TxHash);
 
 /// <summary>
 /// Off-chain mirror of one RFM Request. Phase is DERIVED from the mirrored state

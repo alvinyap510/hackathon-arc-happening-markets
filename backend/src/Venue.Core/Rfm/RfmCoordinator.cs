@@ -52,7 +52,7 @@ public sealed class RfmCoordinator
                 break;
             case QuoteRevealed q:
                 if (_requests.TryGetValue(q.RequestId, out var rq))
-                    rq.Reveals.Add(new RevealView(q.Mm, q.Tick, q.Size, q.InRange));
+                    rq.Reveals.Add(new RevealView(q.Mm, q.Tick, q.Size, q.InRange, q.TxHash));
                 break;
             case RfmFill f:
                 if (_requests.TryGetValue(f.RequestId, out var rf))

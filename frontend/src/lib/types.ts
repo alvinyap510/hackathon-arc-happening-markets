@@ -131,6 +131,16 @@ export interface NewOrder {
   type: OrderType;
 }
 
+/** Wire: POST /v1/orders response — the immediate placement outcome. `fills` carries
+ *  the taker's own tradeIds so settlement frames can be attributed to THIS order. */
+export interface PlaceOrderResult {
+  orderId: string;
+  status: string; // lowercase terminal status (resting|filled|partial|rejected|...)
+  size: string;
+  remaining: string;
+  fills: { tradeId: string; tradeClass: string; size: string; priceTick: number }[];
+}
+
 /** Wire: OrderView. Filled size = size - remaining. */
 export interface Order {
   orderId: string;
@@ -198,7 +208,7 @@ export interface RfmView {
   phase?: string; // lowercase
   postedTxHash?: string | null;
   born?: { marketId: MarketId; marginalYesTick: number; vwapYesTick: number; filled?: string | null; txHash?: string | null } | null;
-  reveals?: { mm: Address; tick: string; size: string; inRange: boolean }[];
+  reveals?: { mm: Address; tick: string; size: string; inRange: boolean; txHash?: string | null }[];
   fills?: { mm: Address; tick: string; size: string }[]; // REST only
 }
 
@@ -227,6 +237,8 @@ export interface RfmReveal {
   priceTick: number;
   size: string;
   valid: boolean;
+  /** Tx that emitted QuoteRevealed - the on-chain receipt for this reveal. */
+  txHash?: string | null;
 }
 
 export interface RfmFill {

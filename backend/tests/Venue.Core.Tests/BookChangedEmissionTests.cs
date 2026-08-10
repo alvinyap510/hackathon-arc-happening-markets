@@ -22,7 +22,7 @@ public class BookChangedEmissionTests
         public void Fills(string marketId, IReadOnlyList<SettlementTrade> trades) { }
         public void OrderUpdated(string user, string orderId, string status) { }
         public void BalanceChanged(string user) { }
-        public void SettlementOutcome(string marketId, string batchId, TxStatus status, string? error, IReadOnlyList<string> tradeIds) { }
+        public void SettlementOutcome(string marketId, string batchId, TxStatus status, string? error, IReadOnlyList<string> tradeIds, string? txHash) { }
         public void RfmChanged(BigInteger requestId) { }
         public void MarketBorn(string marketId) { }
         public void GenerationBump() { }

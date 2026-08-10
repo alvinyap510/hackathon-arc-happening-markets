@@ -8,8 +8,9 @@ namespace Venue.Settlement;
 /// </summary>
 public interface ISettlementCoordinator
 {
-    /// <summary>A whole batch settled: release fill reservations, record trade history, broadcast.</summary>
-    Task ConfirmBatchAsync(string batchId, IReadOnlyList<MatchedTrade> matches);
+    /// <summary>A whole batch settled on chain (txHash = the confirmed settleBatch tx):
+    /// release fill reservations, record trade history, broadcast.</summary>
+    Task ConfirmBatchAsync(string batchId, string txHash, IReadOnlyList<MatchedTrade> matches);
 
     /// <summary>A batch reverted at <paramref name="revert"/>: cancel the failing trade's orders, resubmit the rest.</summary>
     Task RepairBatchAsync(string batchId, IReadOnlyList<MatchedTrade> matches, BatchRevertInfo revert);
