@@ -37,6 +37,18 @@ export function tickToPct(tick: number): string {
   return `${(tick / 10).toFixed(1)}%`;
 }
 
+/** Tick 0-1000 -> price in cents, e.g. 530 -> "53.0¢". */
+export function tickToCents(tick: number): string {
+  return `${(tick / 10).toFixed(1)}¢`;
+}
+
+/** Cents input string ("62", "62.", "62.5") -> tick 1-999, or null when invalid. */
+export function centsToTick(cents: string): number | null {
+  if (!/^\d{1,2}(\.\d?)?$/.test(cents)) return null;
+  const tick = Math.round(parseFloat(cents) * 10);
+  return tick >= 1 && tick <= 999 ? tick : null;
+}
+
 /** Tick -> dollar price of one outcome token, e.g. 530 -> "$0.53". */
 export function tickToPrice(tick: number): string {
   return `$${(tick / 1000).toFixed(2)}`;

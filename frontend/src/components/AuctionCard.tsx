@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useRfm } from "../lib/store";
 import { useNow } from "../lib/useNow";
-import { formatUsdc, shortAddr, tickToPct, timeRemaining, txUrl } from "../lib/format";
+import { formatUsdc, shortAddr, tickToCents, tickToPct, timeRemaining, txUrl } from "../lib/format";
 import PhaseStepper from "./PhaseStepper";
 import BornFlight from "./BornFlight";
 
@@ -64,7 +64,7 @@ export default function AuctionCard({
               min match <b className="text-paper-200">{formatUsdc(request.minMatch, 0)}</b>
             </span>
             <span>
-              max price <b className="text-paper-200">{tickToPct(request.maxPriceTick)}</b>
+              max price <b className="text-paper-200">{tickToCents(request.maxPriceTick)}</b>
             </span>
             <span>
               escrow <b className="text-gold-300">{formatUsdc(request.escrow, 0)}</b>

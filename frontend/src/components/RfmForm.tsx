@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useStore } from "../lib/store";
 import type { NewRfmRequest, OutcomeSide, RfmDuration, RfmRequest } from "../lib/types";
-import { formatUsdc, parseUsdc } from "../lib/format";
+import { centsToTick, formatUsdc, parseUsdc } from "../lib/format";
 import TxLink from "./TxLink";
 
 const BOND = "500000000"; // 500 USDC, symmetric with the MM bond
@@ -24,13 +24,13 @@ export default function RfmForm({ onPosted }: { onPosted: (r: RfmRequest) => voi
   const [duration, setDuration] = useState<RfmDuration>("1m"); // demo-friendly: born ~1 min after posting
   const [qty, setQty] = useState("1000");
   const [minMatch, setMinMatch] = useState("500");
-  const [maxPrice, setMaxPrice] = useState("620");
+  const [maxPrice, setMaxPrice] = useState("62.0");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [postedTx, setPostedTx] = useState<string | null>(null);
 
   const qtyBase = parseUsdc(qty);
-  const tick = Number(maxPrice);
+  const tick = centsToTick(maxPrice) ?? 0;
   const escrow = qtyBase !== null && tick > 0 ? (BigInt(qtyBase) * BigInt(tick)) / 1000n : null;
   const total = escrow !== null ? escrow + BigInt(BOND) : null;
   const enough = total !== null && balances !== null && total <= BigInt(balances.available);
@@ -44,7 +44,7 @@ export default function RfmForm({ onPosted }: { onPosted: (r: RfmRequest) => voi
     const minBase = parseUsdc(minMatch);
     if (minBase === null || BigInt(minBase) <= 0n || BigInt(minBase) > BigInt(qtyBase))
       return setError("Min match must be between 1 and the quantity.");
-    if (!(tick > 0 && tick < 1000)) return setError("Max price must be a tick between 1 and 999.");
+    if (!(tick > 0 && tick < 1000)) return setError("Max price must be between 0.1¢ and 99.9¢.");
     setBusy(true);
     try {
       const req: NewRfmRequest = {
@@ -143,7 +143,16 @@ export default function RfmForm({ onPosted }: { onPosted: (r: RfmRequest) => voi
         </div>
         <div>
           <label className="label-caps">Max price</label>
-          <input className="input num mt-1" value={maxPrice} onChange={(e) => setMaxPrice(e.target.value.replace(/\D/g, "").slice(0, 3))} />
+          <div className="relative mt-1">
+            <input
+              className="input num w-full pr-7"
+              value={maxPrice}
+              onChange={(e) => setMaxPrice(e.target.value.replace(/[^\d.]/g, "").replace(/^(\d{0,2})(\.?)(\d?).*$/, "$1$2$3"))}
+            />
+            <span aria-hidden className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-ink-400">
+              ¢
+            </span>
+          </div>
         </div>
       </div>
 
