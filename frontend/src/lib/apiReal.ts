@@ -163,7 +163,8 @@ export class RealApi implements VenueApi {
 
   async listMarkets(): Promise<Market[]> {
     const vs = await this.req<MarketView[]>("GET", "/markets");
-    return vs.map((v) => this.toMarket(v));
+    // exists:false = a request's marketHash whose auction failed (never born on chain)
+    return vs.filter((v) => v.exists).map((v) => this.toMarket(v));
   }
 
   async getMarket(id: MarketId): Promise<Market> {
