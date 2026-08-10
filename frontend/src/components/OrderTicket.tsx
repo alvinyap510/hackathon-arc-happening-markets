@@ -3,6 +3,7 @@ import { useStore } from "../lib/store";
 import type { Book, Market, OrderType, OutcomeSide } from "../lib/types";
 import { foldBook, touchPrice, sweepLevels, sweep } from "../lib/bookFold";
 import { useSettlementToast } from "../lib/useSettlementToast";
+import { placeWithWatcher } from "../lib/placeWithWatcher";
 import Toast from "./Toast";
 import { formatUsdc, parseUsdc, tickToPct } from "../lib/format";
 import SellShares from "./SellShares";
@@ -59,24 +60,14 @@ export default function OrderTicket({ market, book }: { market: Market; book: Bo
     if (sizeBase === null || BigInt(sizeBase) <= 0n) return setError("Enter a size.");
     if (effTick === null || !Number.isFinite(effTick) || effTick < 1 || effTick > 999) return setError("No usable price.");
     setBusy(true);
-    const watcher = settle.arm(); // BEFORE the POST: a fast settlement frame must not be missed
     try {
-      let res;
-      try {
-        res = await api.placeOrder({ marketId: market.marketId, outcome, side: tab, price: effTick, size: sizeBase, type });
-      } catch (e) {
-        // placement-only failure boundary: the watcher dies ONLY when the POST fails
-        watcher.failed();
-        setError(e instanceof Error ? e.message : "Order rejected");
-        return;
-      }
-      watcher.placed(res.fills.map((f) => f.tradeId));
-      // a balance-refresh hiccup must not kill the watcher or mislabel the accepted order
-      try {
-        await refreshBalances();
-      } catch {
-        setError("Order placed; balance refresh failed — it will catch up.");
-      }
+      const { error: placeError } = await placeWithWatcher(
+        api,
+        settle.arm,
+        { marketId: market.marketId, outcome, side: tab, price: effTick, size: sizeBase, type },
+        refreshBalances,
+      );
+      if (placeError) setError(placeError);
     } finally {
       setBusy(false);
     }
