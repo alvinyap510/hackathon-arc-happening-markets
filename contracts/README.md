@@ -9,7 +9,7 @@ Four contracts. Custody is isolated from settlement so a broken exchange can nev
 | `OutcomeTokens` | CTF-lite ERC-1155 + collateral pool. `split`/`merge` callable only by Vault |
 | `RFM` | The auction: request → sealed commit-reveal quotes + bonds → deadline match → market born |
 
-Spec: `../../PLAN_CONTRACTS.md` (FINAL, two-round audited).
+Designed against an internal spec (PLAN_CONTRACTS.md, two-round adversarial audit before any code); all four contracts are deployed and verified on Arc testnet 5042002.
 
 ## Build & test
 
